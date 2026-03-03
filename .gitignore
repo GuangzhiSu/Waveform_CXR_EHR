@@ -1,0 +1,31 @@
+# 数据文件（超过 GitHub 100MB 限制）
+*.pkl
+cxr_supertable_matched.csv
+
+# 日志文件
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 环境
+.env
+.venv/
+venv/
+env/
