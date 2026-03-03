@@ -2,12 +2,12 @@
 
 Waveform, CXR and EHR data matching and processing.
 
-## 文件说明
+## File Description
 
-- `run_full_match.py` - 主匹配脚本
-- `dataset.ipynb` - 数据处理 Notebook
-- `cxr_supertable_matched.csv` / `.pkl` - 匹配后的数据（需自行生成或获取）
+- `run_full_match.py` - Main matching script
+- `dataset.ipynb` - Data processing notebook
+- `cxr_supertable_matched.csv` / `.pkl` - Matched data (need to be generated or obtained separately)
 
-## 使用
+## Usage
 
-数据文件 (`cxr_supertable_matched.csv`, `cxr_supertable_matched.pkl`) 因体积较大未包含在仓库中，请根据 `run_full_match.py` 脚本生成。
+Data files (`cxr_supertable_matched.csv`, `cxr_supertable_matched.pkl`) are not included in this repository due to their large size. Please generate them using the `run_full_match.py` script.

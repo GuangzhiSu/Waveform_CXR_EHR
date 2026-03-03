@@ -1,8 +1,8 @@
-# 数据文件（超过 GitHub 100MB 限制）
+# Data files (exceeding GitHub 100MB limit)
 *.pkl
 cxr_supertable_matched.csv
 
-# 日志文件
+# Log files
 *.log
 
 # Python
@@ -24,7 +24,7 @@ build/
 *.swp
 *.swo
 
-# 环境
+# Environment
 .env
 .venv/
 venv/
