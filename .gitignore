@@ -1,9 +1,21 @@
 # Data files (exceeding GitHub 100MB limit)
 *.pkl
-cxr_supertable_matched.csv
+*.csv
 
-# Log files
+# Checkpoints (resume state)
+extract_p2f_checkpoint.json
+extract_p2f_checkpoint.csv
+run_full_match_checkpoint.json
+run_full_match_partial.csv
+experiment1/run_full_match_checkpoint.json
+experiment1/run_full_match_partial.csv
+
+# Logs and outputs
+logs/
 *.log
+experiment1/baseline/output/
+experiment1/baseline2/output/
+experiment1/baseline3/output/
 
 # Python
 __pycache__/
