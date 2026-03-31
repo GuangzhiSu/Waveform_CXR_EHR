@@ -5,15 +5,20 @@ Uses encoders from MedTVT-R1 for consistency.
 import os
 import sys
 from collections import OrderedDict
+from pathlib import Path
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# Add MedTVT-R1 to path for encoder imports
-_MEDTVT_ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "MedTVT-R1")
-if _MEDTVT_ROOT not in sys.path:
-    sys.path.insert(0, _MEDTVT_ROOT)
+# MedTVT-R1 checkout (contains `llama/`): env MEDTVT_ROOT, or repo/MedTVT-R1, or sibling ../MedTVT-R1
+_BASELINE_DIR = Path(__file__).resolve().parent
+_EXP_ROOT = _BASELINE_DIR.parent
+if str(_EXP_ROOT) not in sys.path:
+    sys.path.insert(0, str(_EXP_ROOT))
+from medtvt_paths import ensure_medtvt_on_syspath
+
+ensure_medtvt_on_syspath()
 
 from transformers import ViTConfig, ViTModel, ViTImageProcessor
 from llama.xresnet1d_101 import xresnet1d101

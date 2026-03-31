@@ -16,6 +16,32 @@ logs/
 experiment1/baseline/output/
 experiment1/baseline2/output/
 experiment1/baseline3/output/
+# BaselineExperiment (ECG / CXR / EHR) training artifacts
+BaselineExperiment/**/output/
+
+# Model weights & large binaries (keep out of git; use release / cluster paths)
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.onnx
+*.joblib
+*.npy
+*.npz
+*.h5
+*.hdf5
+# Local MedTVT / HF checkout with checkpoints (clone separately on HPC)
+MedTVT-R1/
+
+# ML experiment tracking & caches
+wandb/
+.mlflow/
+runs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 
 # Python
 __pycache__/
@@ -30,11 +56,13 @@ build/
 # Jupyter
 .ipynb_checkpoints/
 
-# IDE
+# IDE / editor
 .idea/
 .vscode/
 *.swp
 *.swo
+.DS_Store
+Thumbs.db
 
 # Environment
 .env

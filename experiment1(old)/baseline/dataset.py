@@ -5,6 +5,7 @@ EHR oxygenation (e.g. spo2) is used as ground truth only, not as model input.
 Goal: Predict oxygenation from ECG + CXR; EHR provides the labels.
 """
 import os
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -17,9 +18,12 @@ from torchvision import transforms
 import wfdb
 
 # Reuse MedTVT-R1 data loading where possible
-_MEDTVT_ROOT = Path(__file__).resolve().parents[2] / "MedTVT-R1"
-if str(_MEDTVT_ROOT) not in __import__("sys").path:
-    __import__("sys").path.insert(0, str(_MEDTVT_ROOT))
+_EXP = Path(__file__).resolve().parents[1]
+if str(_EXP) not in sys.path:
+    sys.path.insert(0, str(_EXP))
+from medtvt_paths import ensure_medtvt_on_syspath
+
+ensure_medtvt_on_syspath()
 
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]

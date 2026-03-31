@@ -1,0 +1,7 @@
+{
+  "best_val_mae": 123.20849886807528,
+  "test_mae": 150.01850382486978,
+  "test_rmse": 238.43462481883793,
+  "target_col": "p2f_vent_fio2",
+  "modality": "ECG-only"
+}

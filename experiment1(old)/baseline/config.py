@@ -1,11 +1,17 @@
 """
 Default configuration for baseline training.
 """
+import sys
 from pathlib import Path
+
+_EXP = Path(__file__).resolve().parents[1]
+if str(_EXP) not in sys.path:
+    sys.path.insert(0, str(_EXP))
+from medtvt_paths import resolve_medtvt_root
 
 # Paths (relative to project root)
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-MEDTVT_ROOT = PROJECT_ROOT.parent / "MedTVT-R1"
+MEDTVT_ROOT = Path(resolve_medtvt_root())
 
 DATA_CSV = str(PROJECT_ROOT / "cxr_supertable_waveform_matched.csv")
 CXR_ROOT = "/hpc/group/kamaleswaranlab/mimic_cxr/mimic_cxr_jpg"

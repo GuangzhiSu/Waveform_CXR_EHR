@@ -1,0 +1,10 @@
+{
+  "best_val_mae": 133.5928955078125,
+  "test_mae": 159.82159423828125,
+  "test_rmse": 233.80311061072305,
+  "test_mse": 54663.89453125,
+  "target_col": "p2f_vent_fio2",
+  "n_train": 106,
+  "n_val": 22,
+  "n_test": 24
+}

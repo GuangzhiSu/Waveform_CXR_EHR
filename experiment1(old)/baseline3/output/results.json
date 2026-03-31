@@ -1,0 +1,7 @@
+{
+  "best_val_mae": 134.66917835582387,
+  "test_mae": 160.80818684895834,
+  "test_rmse": 233.53708551855314,
+  "target_col": "p2f_vent_fio2",
+  "modality": "CXR-only"
+}
