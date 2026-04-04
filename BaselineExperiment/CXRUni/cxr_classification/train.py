@@ -11,7 +11,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from classification_utils import (
     compute_class_weights,
+    print_collapse_batch_diagnostics,
+    print_grad_norm_groups,
+    print_head_last_linear_stats,
+    print_model_forward_spread,
+    print_tensor_batch_diagnostics,
+    print_trainable_param_counts,
+    scan_cxr_train_files,
     stratified_train_val_test_indices,
+    total_grad_l2_norm,
 )
 from cxr_classification.dataset import CXRClassificationDataset
 from cxr_classification.model import CXRClassificationBaseline
@@ -59,6 +67,12 @@ def main(args):
     np.random.seed(args.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"CXR ARDS Classification. Device: {device}")
+    print(
+        f"  torch.cuda.is_available()={torch.cuda.is_available()}  "
+        f"freeze_encoder={args.freeze_encoder}"
+    )
+    if torch.cuda.is_available():
+        print(f"  CUDA device: {torch.cuda.get_device_name(0)}")
 
     full_ds = CXRClassificationDataset(
         csv_path=args.csv_path,
@@ -110,6 +124,14 @@ def main(args):
         freeze_encoder=args.freeze_encoder,
     )
     model = model.to(device)
+    print_trainable_param_counts(model, "CXR baseline")
+    if not args.skip_input_diag:
+        print("\n=== Input diagnostics (train split) ===")
+        scan_cxr_train_files(train_ds, max_scan=min(512, len(train_ds)), seed=args.seed)
+        diag_batch = next(iter(train_loader))
+        print_tensor_batch_diagnostics("cxr", diag_batch["cxr"])
+        print_model_forward_spread(model, train_loader, device, "cxr", batch=diag_batch)
+        print("=== End diagnostics ===\n")
     class_weights = compute_class_weights(y[idx_train], args.num_classes, device)
     criterion_train = nn.CrossEntropyLoss(
         weight=class_weights, label_smoothing=args.label_smoothing
@@ -119,18 +141,60 @@ def main(args):
     print(f"  label_smoothing (train only): {args.label_smoothing}")
     optimizer = build_optimizer(model, args)
 
+    cxr_grad_groups = (("cxr_encoder", "encoder"), ("head", "head"))
+    if args.collapse_diag:
+        print("\n=== Collapse diagnostics (head init) ===")
+        print_head_last_linear_stats(model, tag="collapse head")
+        print("=== End collapse head init ===\n")
+
     best_val_acc = 0.0
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    class_names = ["Severe", "Moderate", "Mild"]
+
     for epoch in range(args.epochs):
         model.train()
         train_loss = 0
-        for batch in train_loader:
+        for step, batch in enumerate(train_loader):
             pred = model(batch["cxr"].to(device))
-            loss = criterion_train(pred, batch["label"].to(device))
+            labels = batch["label"].to(device)
+            loss = criterion_train(pred, labels)
             optimizer.zero_grad()
             loss.backward()
+            if args.train_diag and epoch == 0 and step == 0:
+                gnorm, gn = total_grad_l2_norm(model)
+                print(
+                    f"  [train_diag] epoch1 batch0: loss={loss.item():.6f}  "
+                    f"||grad||_2={gnorm:.6f}  tensors_with_grad={gn}"
+                )
+                with torch.no_grad():
+                    p0 = pred.argmax(dim=1)
+                    pc = torch.bincount(p0, minlength=args.num_classes).cpu().tolist()
+                    lc = torch.bincount(labels, minlength=args.num_classes).cpu().tolist()
+                print(
+                    f"  [train_diag] batch0 argmax counts [{', '.join(class_names)}]: "
+                    f"pred={pc}  labels={lc}"
+                )
+                print(
+                    f"  [train_diag] batch0 logits mean: "
+                    f"{pred.detach().mean(0).cpu().numpy().round(4).tolist()}"
+                )
+            if args.collapse_diag and step == 0 and (
+                epoch == 0 or (args.epochs > 1 and epoch == args.epochs - 1)
+            ):
+                phase = "epoch0" if epoch == 0 else "last_epoch"
+                print(f"\n=== Collapse diagnostics (train {phase}, batch 0) ===")
+                print_collapse_batch_diagnostics(
+                    pred,
+                    labels,
+                    args.num_classes,
+                    class_names=["Severe", "Moderate", "Mild"],
+                    tag=f"collapse train {phase}",
+                )
+                print_grad_norm_groups(model, cxr_grad_groups, tag=f"collapse grad {phase}")
+                print_head_last_linear_stats(model, tag=f"collapse head {phase}")
+                print(f"=== End collapse train {phase} ===\n")
             optimizer.step()
             train_loss += loss.item()
         train_loss /= len(train_loader)
@@ -138,6 +202,8 @@ def main(args):
         model.eval()
         val_correct, val_total = 0, 0
         val_loss_sum = 0
+        val_pred_hist = torch.zeros(args.num_classes, dtype=torch.long)
+        val_label_hist = torch.zeros(args.num_classes, dtype=torch.long)
         with torch.no_grad():
             for batch in val_loader:
                 pred = model(batch["cxr"].to(device))
@@ -145,10 +211,30 @@ def main(args):
                 val_loss_sum += criterion_eval(pred, target).item()
                 val_correct += (pred.argmax(1) == target).sum().item()
                 val_total += target.size(0)
+                if args.train_diag:
+                    p = pred.argmax(1).cpu()
+                    val_pred_hist += torch.bincount(p, minlength=args.num_classes)
+                    val_label_hist += torch.bincount(target.cpu(), minlength=args.num_classes)
         val_acc = val_correct / val_total if val_total else 0
         val_loss = val_loss_sum / len(val_loader) if val_loader else 0
 
         print(f"Epoch {epoch+1}/{args.epochs}  train_loss={train_loss:.4f}  val_loss={val_loss:.4f}  val_acc={val_acc:.4f}")
+        if args.train_diag:
+            vp = val_pred_hist.tolist()
+            vl = val_label_hist.tolist()
+            n_used = sum(1 for c in vp if c > 0)
+            max_pred = max(vp) if vp else 0
+            frac_dom = max_pred / val_total if val_total else 0.0
+            if frac_dom >= 0.99:
+                collapse_note = "-> ~all val preds one class (collapsed)"
+            elif n_used <= 2:
+                collapse_note = "-> only 2/3 classes predicted (one class nearly absent)"
+            else:
+                collapse_note = "-> predictions spread across 3 classes"
+            print(
+                f"  [train_diag] val counts [{', '.join(class_names)}]: "
+                f"pred={vp}  true={vl}  {collapse_note}"
+            )
         if val_acc > best_val_acc:
             best_val_acc = val_acc
             torch.save({"model": model.state_dict(), "epoch": epoch, "val_acc": val_acc}, out_dir / "best.pt")
@@ -175,7 +261,6 @@ def main(args):
 
     # Per-class accuracy
     from sklearn.metrics import classification_report, confusion_matrix
-    class_names = ["Severe", "Moderate", "Mild"]
     report = classification_report(all_labels, all_preds, target_names=class_names, output_dict=True)
     cm = confusion_matrix(all_labels, all_preds)
 
@@ -234,6 +319,23 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=SEED)
     parser.add_argument("--num_workers", type=int, default=NUM_WORKERS)
     parser.add_argument("--output_dir", default="./output")
+    parser.add_argument(
+        "--skip_input_diag",
+        action="store_true",
+        help="Skip file/tensor/forward diagnostics at startup",
+    )
+    parser.add_argument(
+        "--collapse_diag",
+        action="store_true",
+        help="Print logits/softmax/entropy, pred vs label counts, grad norms (encoder vs head), "
+        "and last-layer stats on batch 0 of first and last training epoch",
+    )
+    parser.add_argument(
+        "--train_diag",
+        action="store_true",
+        help="Print device/freeze context (extra), global grad norm and batch0 logits on first batch, "
+        "and val set prediction vs label histograms each epoch (spots majority-class collapse)",
+    )
     args = parser.parse_args()
     if args.no_freeze:
         args.freeze_encoder = False

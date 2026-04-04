@@ -4,13 +4,17 @@ Uses CXREncoder + MLP classification head. Input: CXR image. Output: class (0=Se
 """
 import os
 import sys
+from pathlib import Path
 
-# Add paths for encoder import
-# cxr_classification -> CXRUni -> BaselineExperiment -> repo root
-_EXP_ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "..", "experiment1(old)")
-if os.path.exists(_EXP_ROOT) and _EXP_ROOT not in sys.path:
-    sys.path.insert(0, _EXP_ROOT)
-from baseline.model import CXREncoder
+# cxr_classification -> CXRUni -> BaselineExperiment -> repo root (Waveform_CXR_EHR)
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_EXP_ROOT = _REPO_ROOT / "experiment1(old)"
+if _EXP_ROOT.is_dir():
+    p = str(_EXP_ROOT)
+    if p not in sys.path:
+        sys.path.insert(0, p)
+# Import CXR encoder only — avoids ``baseline.model`` -> ``llama.xresnet1d_101`` (MedTVT-R1).
+from baseline.cxr_encoder import CXREncoder
 
 import torch
 import torch.nn as nn

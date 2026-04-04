@@ -1,7 +1,8 @@
 """Config for CXR ARDS classification baseline."""
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+# cxr_classification/ -> CXRUni/ -> BaselineExperiment/ -> repo root
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DATA_DIR = PROJECT_ROOT / "data"
 MEDTVT_ROOT = PROJECT_ROOT / "MedTVT-R1"
 

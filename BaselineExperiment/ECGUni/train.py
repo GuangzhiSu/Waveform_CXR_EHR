@@ -11,6 +11,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from classification_utils import (
     compute_class_weights,
     make_subset,
+    print_collapse_batch_diagnostics,
+    print_grad_norm_groups,
+    print_head_last_linear_stats,
+    print_model_forward_spread,
+    print_tensor_batch_diagnostics,
+    scan_ecg_train_files,
     stratified_train_val_test_indices,
 )
 from ECGUni.dataset import ECGClassificationDataset
@@ -104,6 +110,13 @@ def main(args):
         lora_alpha=args.lora_alpha,
     )
     model = model.to(device)
+    if not args.skip_input_diag:
+        print("\n=== Input diagnostics (train split; same order as training) ===")
+        scan_ecg_train_files(train_ds, max_scan=min(512, len(train_ds)), seed=args.seed)
+        diag_batch = next(iter(train_loader))
+        print_tensor_batch_diagnostics("ecg", diag_batch["signal"])
+        print_model_forward_spread(model, train_loader, device, "ecg", batch=diag_batch)
+        print("=== End diagnostics ===\n")
     trainable = [p for p in model.parameters() if p.requires_grad]
     n_trainable = sum(p.numel() for p in trainable)
     print(f"  Trainable parameters: {n_trainable:,}  (LoRA={args.use_lora})")
@@ -119,6 +132,12 @@ def main(args):
     print(f"  label_smoothing (train only): {args.label_smoothing}")
     optimizer = build_optimizer(model, args, trainable)
 
+    ecg_grad_groups = (("signal_encoder", "encoder"), ("head", "head"))
+    if args.collapse_diag:
+        print("\n=== Collapse diagnostics (head init) ===")
+        print_head_last_linear_stats(model, tag="collapse head")
+        print("=== End collapse head init ===\n")
+
     best_val_acc = 0.0
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -126,11 +145,27 @@ def main(args):
     for epoch in range(args.epochs):
         model.train()
         train_loss = 0
-        for batch in train_loader:
+        for step, batch in enumerate(train_loader):
             pred = model(batch["signal"].to(device))
-            loss = criterion_train(pred, batch["label"].to(device))
+            labels = batch["label"].to(device)
+            loss = criterion_train(pred, labels)
             optimizer.zero_grad()
             loss.backward()
+            if args.collapse_diag and step == 0 and (
+                epoch == 0 or (args.epochs > 1 and epoch == args.epochs - 1)
+            ):
+                phase = "epoch0" if epoch == 0 else "last_epoch"
+                print(f"\n=== Collapse diagnostics (train {phase}, batch 0) ===")
+                print_collapse_batch_diagnostics(
+                    pred,
+                    labels,
+                    args.num_classes,
+                    class_names=["Severe", "Moderate", "Mild"],
+                    tag=f"collapse train {phase}",
+                )
+                print_grad_norm_groups(model, ecg_grad_groups, tag=f"collapse grad {phase}")
+                print_head_last_linear_stats(model, tag=f"collapse head {phase}")
+                print(f"=== End collapse train {phase} ===\n")
             optimizer.step()
             train_loss += loss.item()
         train_loss /= len(train_loader)
@@ -238,6 +273,17 @@ if __name__ == "__main__":
     parser.add_argument("--no_lora", action="store_true", help="Disable LoRA (overrides config USE_LORA)")
     parser.add_argument("--lora_r", type=int, default=LORA_R)
     parser.add_argument("--lora_alpha", type=float, default=LORA_ALPHA)
+    parser.add_argument(
+        "--skip_input_diag",
+        action="store_true",
+        help="Skip file/tensor/forward diagnostics at startup",
+    )
+    parser.add_argument(
+        "--collapse_diag",
+        action="store_true",
+        help="Print logits/softmax/entropy, pred vs label counts, grad norms (encoder vs head), "
+        "and last-layer stats on batch 0 of first and last training epoch",
+    )
     args = parser.parse_args()
     if args.no_freeze:
         args.freeze_encoder = False

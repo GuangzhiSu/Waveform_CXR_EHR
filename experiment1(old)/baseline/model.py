@@ -18,9 +18,11 @@ if str(_EXP_ROOT) not in sys.path:
     sys.path.insert(0, str(_EXP_ROOT))
 from medtvt_paths import ensure_medtvt_on_syspath
 
+# CXR encoder has no ``llama`` dependency; import before MedTVT path for clarity.
+from .cxr_encoder import CXREncoder
+
 ensure_medtvt_on_syspath()
 
-from transformers import ViTConfig, ViTModel, ViTImageProcessor
 from llama.xresnet1d_101 import xresnet1d101
 from llama.lab_encoder import LabsEncoder
 
@@ -41,28 +43,6 @@ def load_encoder_weights(model, ckpt_path, key_prefix="", strict=False):
             state[k] = v
     model.load_state_dict(state, strict=strict)
     return model
-
-
-class CXREncoder(nn.Module):
-    """ViT-based CXR encoder (MedTVT-R1 style)."""
-
-    def __init__(self, vit_path="google/vit-base-patch16-224-in21k", hidden_dim=512, freeze=True):
-        super().__init__()
-        config = ViTConfig.from_pretrained(vit_path)
-        self.vit = ViTModel(config)
-        self.processor = ViTImageProcessor.from_pretrained(vit_path, do_rescale=False)
-        self.proj = nn.Linear(768, hidden_dim)
-        self.hidden_dim = hidden_dim
-        if freeze:
-            for p in self.vit.parameters():
-                p.requires_grad = False
-
-    def forward(self, x):
-        # x: (B, 3, 224, 224)
-        with torch.no_grad() if not self.training else torch.enable_grad():
-            out = self.vit(x).last_hidden_state  # (B, 197, 768)
-            cls = out[:, 0]  # (B, 768)
-        return self.proj(cls)  # (B, hidden_dim)
 
 
 class SignalEncoder(nn.Module):

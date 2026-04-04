@@ -2,7 +2,6 @@
 Dataset for ECG-only ARDS severity classification.
 Uses p2f_ecg_all_classified.csv with p2f_class (0=Severe, 1=Moderate, 2=Mild).
 """
-import os
 from pathlib import Path
 
 import numpy as np
@@ -65,8 +64,9 @@ class ECGClassificationDataset(Dataset):
         row = self.df.iloc[idx]
         wf_path = row["wf_File_Path"]
 
-        if pd.notna(wf_path) and str(wf_path).strip() and os.path.exists(wf_path):
-            ecg = load_ecg(wf_path)
+        # WFDB uses path prefix without extension; .hea/.dat may exist but os.path.exists(prefix) is often False.
+        if pd.notna(wf_path) and str(wf_path).strip():
+            ecg = load_ecg(str(wf_path).strip())
         else:
             ecg = torch.zeros(12, 1000)
 

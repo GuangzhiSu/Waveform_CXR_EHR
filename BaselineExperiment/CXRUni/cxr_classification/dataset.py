@@ -27,11 +27,44 @@ def _norm_dicom_id(x):
         return s
 
 
+def _mimic_numeric_path_segment(x):
+    """MIMIC folder names use integer IDs; CSV may store floats — avoid ``p19210871.0`` style paths."""
+    if pd.isna(x) or x == "":
+        return ""
+    try:
+        return str(int(float(x)))
+    except (ValueError, TypeError, OverflowError):
+        return str(x).strip()
+
+
+def _first_non_empty_study_id(row) -> str:
+    """Prefer metadata ``study_id``; if merge missed (NaN), use ``wf_Study_ID`` from supertable."""
+    sid = row.get("study_id", np.nan)
+    if pd.notna(sid) and str(sid).strip() != "":
+        return sid
+    wf = row.get("wf_Study_ID", np.nan)
+    if pd.notna(wf) and str(wf).strip() != "":
+        return wf
+    return ""
+
+
 def get_cxr_path(dicom_id, subject_id, study_id, cxr_root):
-    """Build MIMIC-CXR-JPG path: files/p{first3}/p{subject_id}/s{study_id}/{dicom_id}.jpg"""
-    s = str(int(float(subject_id)))
-    first3 = s[:3] if len(s) >= 3 else s.zfill(3)
-    return os.path.join(cxr_root, "files", f"p{first3}", f"p{subject_id}", f"s{study_id}", f"{dicom_id}.jpg")
+    """Build MIMIC-CXR-JPG path (PhysioNet layout).
+
+    Example: ``files/p10/p10000032/s50414267/<dicom_id>.jpg`` — the first subfolder uses the
+    **first two digits** of ``subject_id`` (e.g. 10000032 → ``p10``), not three.
+    See https://physionet.org/content/mimic-cxr-jpg/2.0.0/ (Data Description).
+    """
+    subj = _mimic_numeric_path_segment(subject_id)
+    if not subj:
+        return ""
+    # Partition folder: p{first_two_chars_of_subject_id} — NOT subj[:3]
+    part = subj[:2] if len(subj) >= 2 else subj.zfill(2)
+    study = _mimic_numeric_path_segment(study_id)
+    dicom_str = _norm_dicom_id(dicom_id)
+    if not study or not dicom_str:
+        return ""
+    return os.path.join(cxr_root, "files", f"p{part}", f"p{subj}", f"s{study}", f"{dicom_str}.jpg")
 
 
 def load_cxr(path, split="train", imagenet_normalize: bool = True):
@@ -106,10 +139,10 @@ class CXRClassificationDataset(Dataset):
         row = self.df.iloc[row_idx]
         dicom_id = row["dicom_id"]
         subject_id = row["subject_id"]
-        study_id = row.get("study_id", row.get("wf_Study_ID", ""))
+        study_id = _first_non_empty_study_id(row)
 
         cxr_path = get_cxr_path(dicom_id, subject_id, study_id, self.cxr_root)
-        if os.path.exists(cxr_path):
+        if cxr_path and os.path.isfile(cxr_path):
             cxr = load_cxr(cxr_path, self.split, imagenet_normalize=self.imagenet_normalize)
         else:
             cxr = torch.zeros(3, 224, 224)

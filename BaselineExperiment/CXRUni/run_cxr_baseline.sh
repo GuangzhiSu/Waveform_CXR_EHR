@@ -15,6 +15,13 @@
 # #SBATCH -x dcc-core-gpu-ferc-s-p15-20
 
 # CXR baseline: extract CXR+classified data -> train CXR-only ARDS severity classification
+#
+# Usage:
+#   sbatch BaselineExperiment/CXRUni/run_cxr_baseline.sh
+#   sbatch .../run_cxr_baseline.sh --epochs 50 --output_dir BaselineExperiment/CXRUni/cxr_classification/output
+# Override image root on hosts where /hpc/group/... is not mounted:
+#   export CXR_ROOT=/your/mimic_cxr_jpg
+#   export METADATA_PATH=/your/mimic-cxr-2.0.0-metadata.csv.gz   # optional
 set -e
 if [[ -n "${SLURM_SUBMIT_DIR}" ]]; then
   PROJECT_DIR="${SLURM_SUBMIT_DIR}"
@@ -29,8 +36,8 @@ ENRICHED_CSV="${DATA_DIR}/p2f_vent_fio2_enriched.csv"
 CLASSIFIED_CSV="${DATA_DIR}/p2f_cxr_classified.csv"
 EXTRACT_SCRIPT="${DATA_DIR}/extract_cxr_p2f_classified.py"
 TRAIN_SCRIPT="${SCRIPT_DIR}/cxr_classification/train.py"
-CXR_ROOT="/hpc/group/kamaleswaranlab/mimic_cxr/mimic_cxr_jpg"
-METADATA_PATH="/hpc/group/kamaleswaranlab/mimic_cxr/mimic_cxr_jpg/mimic-cxr-2.0.0-metadata.csv.gz"
+CXR_ROOT="${CXR_ROOT:-/hpc/group/kamaleswaranlab/mimic_cxr/mimic_cxr_jpg}"
+METADATA_PATH="${METADATA_PATH:-/hpc/group/kamaleswaranlab/mimic_cxr/mimic_cxr_jpg/mimic-cxr-2.0.0-metadata.csv.gz}"
 MEDTVT_ROOT="$(cd "${PROJECT_DIR}/MedTVT-R1" 2>/dev/null && pwd || cd "${PROJECT_DIR}/../MedTVT-R1" 2>/dev/null && pwd || true)"
 if [[ -n "${MEDTVT_ROOT}" && -d "${MEDTVT_ROOT}/CKPTS/vit-base-patch16-224" ]]; then
   VIT_PATH="${MEDTVT_ROOT}/CKPTS/vit-base-patch16-224"
@@ -58,12 +65,14 @@ fi
 
 # Step 2: Train CXR classification model
 echo "=== Step 2: Train CXR ARDS severity classification model ==="
+# Add --train_diag for per-epoch val pred vs label counts + first-batch grad norm (collapse debugging).
 python "${TRAIN_SCRIPT}" \
   --csv_path "${CLASSIFIED_CSV}" \
   --cxr_root "${CXR_ROOT}" \
   --metadata_path "${METADATA_PATH}" \
   --vit_path "${VIT_PATH}" \
   --output_dir "${OUTPUT_DIR}" \
+  --train_diag \
   "$@"
 
 echo "=== Done ==="
