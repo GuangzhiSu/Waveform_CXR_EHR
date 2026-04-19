@@ -2,19 +2,9 @@
 CXR-only baseline for ARDS severity classification.
 Uses CXREncoder + MLP classification head. Input: CXR image. Output: class (0=Severe, 1=Moderate, 2=Mild).
 """
-import os
-import sys
 from pathlib import Path
 
-# cxr_classification -> CXRUni -> BaselineExperiment -> repo root (Waveform_CXR_EHR)
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-_EXP_ROOT = _REPO_ROOT / "experiment1(old)"
-if _EXP_ROOT.is_dir():
-    p = str(_EXP_ROOT)
-    if p not in sys.path:
-        sys.path.insert(0, p)
-# Import CXR encoder only — avoids ``baseline.model`` -> ``llama.xresnet1d_101`` (MedTVT-R1).
-from baseline.cxr_encoder import CXREncoder
+from models.encoders import CXREncoder
 
 import torch
 import torch.nn as nn

@@ -1,46 +1,53 @@
-"""Temporal ECG dataset: window all ECG waveforms, then pool embeddings in model."""
+"""
+Temporal CXR dataset: all chest X-rays in [t-24h, t-12h] per anchor (same window as EHR/ECG baselines).
+Uses supertable_datetime as CXR time for windowing.
+"""
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import torch
-import wfdb
-from scipy.signal import resample
 from torch.utils.data import Dataset
 
-_EPS = 1e-6
+_BASE = Path(__file__).resolve().parents[1]
+if str(_BASE / "CXRUni") not in sys.path:
+    sys.path.insert(0, str(_BASE / "CXRUni"))
+from cxr_classification.dataset import (
+    _first_non_empty_study_id,
+    _norm_dicom_id,
+    get_cxr_path,
+    load_cxr,
+)
 
 
-def normalize_ecg_per_lead(ecg: torch.Tensor) -> torch.Tensor:
-    if ecg.numel() == 0:
-        return ecg
-    m = ecg.mean(dim=1, keepdim=True)
-    s = ecg.std(dim=1, keepdim=True).clamp(min=_EPS)
-    out = (ecg - m) / s
-    return torch.nan_to_num(out, nan=0.0, posinf=0.0, neginf=0.0)
+class CXRTemporalClassificationDataset(Dataset):
+    """
+    One sample = all CXR studies in lookback window for same subject;
+    label = p2f_class at anchor time (index).
+    """
 
-
-def load_ecg(path, target_len=1000):
-    try:
-        rec = wfdb.rdsamp(path)
-        ecg = torch.from_numpy(rec[0].T).float()
-    except Exception:
-        return torch.zeros(12, target_len)
-    ecg_np = resample(ecg.numpy(), target_len, axis=1)
-    ecg = torch.from_numpy(ecg_np).float()
-    if torch.any(torch.isnan(ecg)):
-        ecg = torch.nan_to_num(ecg, nan=0.0)
-    return ecg
-
-
-class ECGTemporalClassificationDataset(Dataset):
-    """One sample = all ECGs in [t-24h, t-12h] for same subject; label is p2f_class at anchor t."""
-
-    def __init__(self, csv_path, lookback_min_hours=12, lookback_max_hours=24, normalize_per_lead: bool = True):
+    def __init__(
+        self,
+        csv_path: str,
+        cxr_root: str,
+        metadata_path: str | None = None,
+        lookback_min_hours: int = 12,
+        lookback_max_hours: int = 24,
+        split: str = "train",
+        imagenet_normalize: bool = True,
+    ):
         self.df = pd.read_csv(csv_path, low_memory=False)
-        self.normalize_per_lead = normalize_per_lead
+        self.cxr_root = cxr_root
+        self.split = split
+        self.imagenet_normalize = imagenet_normalize
 
         if "p2f_class" not in self.df.columns:
-            raise ValueError("CSV must have p2f_class column")
-        for c in ("index", "subject_id", "wf_Base_Time", "wf_File_Path"):
+            raise ValueError("CSV must have p2f_class")
+        for c in ("index", "subject_id", "dicom_id", "supertable_datetime"):
             if c not in self.df.columns:
                 raise ValueError(f"CSV missing required column: {c}")
 
@@ -48,18 +55,27 @@ class ECGTemporalClassificationDataset(Dataset):
         self.df["p2f_class"] = self.df["p2f_class"].astype(int)
         self.df["subject_id"] = pd.to_numeric(self.df["subject_id"], errors="coerce")
         self.df["index"] = pd.to_datetime(self.df["index"], errors="coerce")
-        self.df["wf_Base_Time"] = pd.to_datetime(self.df["wf_Base_Time"], errors="coerce")
+        self.df["supertable_datetime"] = pd.to_datetime(self.df["supertable_datetime"], errors="coerce")
         self.df = self.df[self.df["subject_id"].notna() & self.df["index"].notna()].copy()
         self.df["subject_id"] = self.df["subject_id"].astype(np.int64)
         self.df = self.df.reset_index(drop=True)
 
-        anchor = self.df[["subject_id", "index", "p2f_class"]].drop_duplicates(subset=["subject_id", "index"], keep="first")
+        if metadata_path and os.path.exists(metadata_path):
+            meta = pd.read_csv(metadata_path, usecols=["dicom_id", "subject_id", "study_id"])
+            meta = meta.drop_duplicates(subset=["dicom_id"], keep="first")
+            meta["dicom_id"] = meta["dicom_id"].map(_norm_dicom_id)
+            self.df["dicom_id"] = self.df["dicom_id"].map(_norm_dicom_id)
+            self.df = self.df.merge(meta[["dicom_id", "study_id"]], on="dicom_id", how="left")
+
+        anchor = self.df[["subject_id", "index", "p2f_class"]].drop_duplicates(
+            subset=["subject_id", "index"], keep="first"
+        )
         self.anchor_df = anchor.reset_index(drop=True)
 
-        hist = self.df[self.df["wf_Base_Time"].notna()].copy().reset_index(drop=True)
+        hist = self.df[self.df["supertable_datetime"].notna()].copy().reset_index(drop=True)
         self.hist_df = hist
         self.hist_subject = hist["subject_id"].to_numpy(dtype=np.int64)
-        self.hist_time_ns = hist["wf_Base_Time"].astype("int64").to_numpy()
+        self.hist_time_ns = hist["supertable_datetime"].astype("int64").to_numpy()
         order = np.argsort(self.hist_time_ns)
         hs = self.hist_subject[order]
         ht = self.hist_time_ns[order]
@@ -81,10 +97,10 @@ class ECGTemporalClassificationDataset(Dataset):
         seq_lens = np.array([self._window_indices(i).size for i in range(len(self.anchor_df))], dtype=np.int32)
         seq_lens[seq_lens == 0] = 1
         print(
-            f"  ECG temporal dataset: anchors={len(self.anchor_df):,}, history_rows={len(self.hist_df):,}, "
+            f"  CXR temporal dataset: anchors={len(self.anchor_df):,}, history_rows={len(self.hist_df):,}, "
             f"lookback=[t-{lookback_max_hours}h, t-{lookback_min_hours}h]"
         )
-        print(f"  sequence lengths: min={seq_lens.min()} median={int(np.median(seq_lens))} max={seq_lens.max()}")
+        print(f"  CXR sequence lengths: min={seq_lens.min()} median={int(np.median(seq_lens))} max={seq_lens.max()}")
 
     def _window_indices(self, idx: int) -> np.ndarray:
         sid = int(self.anchor_subject[idx])
@@ -102,7 +118,7 @@ class ECGTemporalClassificationDataset(Dataset):
     def __len__(self):
         return len(self.anchor_df)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int):
         win = self._window_indices(idx)
         if win.size == 0:
             sid = int(self.anchor_subject[idx])
@@ -110,7 +126,7 @@ class ECGTemporalClassificationDataset(Dataset):
             nearest = self.df[
                 (self.df["subject_id"] == sid)
                 & (self.df["index"].astype("int64") == t)
-                & self.df["wf_Base_Time"].notna()
+                & self.df["supertable_datetime"].notna()
             ]
             if len(nearest) > 0:
                 seq_rows = nearest.iloc[[0]]
@@ -119,16 +135,16 @@ class ECGTemporalClassificationDataset(Dataset):
         else:
             seq_rows = self.hist_df.iloc[win]
 
-        sigs = []
+        imgs = []
         for _, row in seq_rows.iterrows():
-            wf_path = row.get("wf_File_Path", "")
-            if pd.notna(wf_path) and str(wf_path).strip():
-                ecg = load_ecg(str(wf_path).strip())
+            dicom_id = row["dicom_id"]
+            subject_id = row["subject_id"]
+            study_id = _first_non_empty_study_id(row)
+            p = get_cxr_path(dicom_id, subject_id, study_id, self.cxr_root)
+            if p and os.path.isfile(p):
+                imgs.append(load_cxr(p, self.split, imagenet_normalize=self.imagenet_normalize))
             else:
-                ecg = torch.zeros(12, 1000)
-            if self.normalize_per_lead:
-                ecg = normalize_ecg_per_lead(ecg)
-            sigs.append(ecg)
+                imgs.append(torch.zeros(3, 224, 224))
 
-        signal_seq = torch.stack(sigs, dim=0)
-        return {"signal_seq": signal_seq, "label": int(self.labels[idx])}
+        cxr_seq = torch.stack(imgs, dim=0)
+        return {"cxr_seq": cxr_seq, "label": int(self.labels[idx])}

@@ -14,8 +14,13 @@ class CXREncoder(nn.Module):
 
     def __init__(self, vit_path="google/vit-base-patch16-224-in21k", hidden_dim=512, freeze=True):
         super().__init__()
+        # Must use from_pretrained so checkpoint weights load; ViTModel(config) alone is random init.
+        # We read CLS from last_hidden_state[:, 0] only — no pooler. Many ViT ckpts omit pooler weights;
+        # add_pooling_layer=False avoids random init + "Some weights were not initialized" stderr noise.
         config = ViTConfig.from_pretrained(vit_path)
-        self.vit = ViTModel(config)
+        if hasattr(config, "add_pooling_layer"):
+            config.add_pooling_layer = False
+        self.vit = ViTModel.from_pretrained(vit_path, config=config)
         self.processor = ViTImageProcessor.from_pretrained(vit_path, do_rescale=False)
         self.proj = nn.Linear(768, hidden_dim)
         self.hidden_dim = hidden_dim

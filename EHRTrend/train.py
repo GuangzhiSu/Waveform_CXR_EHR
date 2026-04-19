@@ -1,4 +1,4 @@
-"""Train temporal EHR ARDS severity classification baseline."""
+"""Train EHR trend classification (decrease/remain/increase)."""
 import argparse
 import json
 import sys
@@ -9,16 +9,14 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
-# BaselineExperiment: classification_utils + EHRUni package
-# Repo root: models.encoders.ehr (used by EHRUni.model)
-_BASELINE_ROOT = Path(__file__).resolve().parents[1]
-_PROJECT_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(_BASELINE_ROOT))
-sys.path.insert(0, str(_PROJECT_ROOT))
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(PROJECT_ROOT / "BaselineExperiment"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from classification_utils import compute_class_weights, make_subset, stratified_train_val_test_indices
-from EHRUni.config import *
-from EHRUni.dataset import EHRClassificationDataset
-from EHRUni.model import EHRClassificationBaseline
+from config import *
+from dataset import EHRTrendDataset
+from model import EHRTrendBaseline
 
 
 def collate_fn(batch):
@@ -42,18 +40,17 @@ def main(args):
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"EHR ARDS Classification (temporal). Device: {device}")
+    print(f"EHR Trend Classification. Device: {device}")
 
-    full_ds = EHRClassificationDataset(
-        anchor_csv=args.csv_path,
+    full_ds = EHRTrendDataset(
+        anchor_csv=args.anchor_csv,
         history_csv=args.history_csv,
         schema_csv=args.schema_csv,
         lookback_min_hours=args.lookback_min_hours,
         lookback_max_hours=args.lookback_max_hours,
-        window_temporal_impute=args.window_temporal_impute,
     )
     input_dim = full_ds.input_dim
-    print(f"EHR input dim (percentile row vector): {input_dim}")
+    print(f"EHR row input dim (percentile vector): {input_dim}")
 
     y = full_ds.anchor_labels
     test_split = 1.0 - args.train_split - args.val_split
@@ -67,7 +64,7 @@ def main(args):
     print(f"Split (stratified): train={len(idx_train)}, val={len(idx_val)}, test={len(idx_test)}")
     for name, yi in (("train", y[idx_train]), ("val", y[idx_val]), ("test", y[idx_test])):
         c = np.bincount(yi.astype(int), minlength=args.num_classes)
-        print(f"  {name} class counts [Severe, Moderate, Mild]: {c.tolist()}")
+        print(f"  {name} trend counts [decrease, remain, increase]: {c.tolist()}")
 
     train_loader = DataLoader(
         train_ds,
@@ -92,12 +89,11 @@ def main(args):
         collate_fn=collate_fn,
     )
 
-    model = EHRClassificationBaseline(
+    model = EHRTrendBaseline(
         input_dim=input_dim,
         num_classes=args.num_classes,
         embed_dim=args.embed_dim,
         pooling_stats=args.pooling_stats,
-        encoder_kind=args.ehr_encoder,
         head_hidden_dim=args.head_hidden_dim,
     ).to(device)
 
@@ -135,6 +131,7 @@ def main(args):
                 val_total += target.size(0)
         val_acc = val_correct / val_total if val_total else 0.0
         val_loss = val_loss_sum / len(val_loader) if len(val_loader) else 0.0
+
         print(f"Epoch {epoch+1}/{args.epochs}  train_loss={train_loss:.4f}  val_loss={val_loss:.4f}  val_acc={val_acc:.4f}")
 
         if val_acc > best_val_acc:
@@ -163,7 +160,7 @@ def main(args):
 
     from sklearn.metrics import classification_report, confusion_matrix
 
-    class_names = ["Severe", "Moderate", "Mild"]
+    class_names = ["decrease", "remain", "increase"]
     report = classification_report(all_labels, all_preds, target_names=class_names, output_dict=True)
     cm = confusion_matrix(all_labels, all_preds)
 
@@ -178,13 +175,12 @@ def main(args):
         "best_val_acc": best_val_acc,
         "test_acc": test_acc,
         "confusion_matrix": cm.tolist(),
-        "modality": "EHR-only temporal",
-        "task": "ARDS_severity_classification",
+        "task": "EHR_trend_classification",
         "history_csv": args.history_csv,
+        "anchor_csv": args.anchor_csv,
         "schema_csv": args.schema_csv,
         "lookback_min_hours": args.lookback_min_hours,
         "lookback_max_hours": args.lookback_max_hours,
-        "window_temporal_impute": args.window_temporal_impute,
         "pooling_stats": list(args.pooling_stats),
     }
     with open(out_dir / "results.json", "w") as f:
@@ -195,25 +191,13 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--csv_path", default=DATA_CSV)
-    parser.add_argument("--history_csv", default=HISTORY_CSV)
+    parser.add_argument("--anchor_csv", default=ANCHOR_CSV)
+    parser.add_argument("--history_csv", default=SOURCE_CSV)
     parser.add_argument("--schema_csv", default=SCHEMA_CSV)
     parser.add_argument("--lookback_min_hours", type=int, default=LOOKBACK_MIN_HOURS)
     parser.add_argument("--lookback_max_hours", type=int, default=LOOKBACK_MAX_HOURS)
-    parser.add_argument(
-        "--no_window_temporal_impute",
-        action="store_true",
-        help="Disable per-window temporal nearest imputation; use legacy global median fill per row before percentiles.",
-    )
     parser.add_argument("--num_classes", type=int, default=NUM_CLASSES)
     parser.add_argument("--embed_dim", type=int, default=EMBED_DIM)
-    parser.add_argument(
-        "--ehr_encoder",
-        type=str,
-        default="mlp",
-        choices=["mlp", "transformer", "contrastive"],
-        help="EHR encoder implementation from models/encoders/ehr.py",
-    )
     parser.add_argument("--pooling_stats", nargs="+", default=list(POOLING_STATS))
     parser.add_argument("--head_hidden_dim", type=int, default=HEAD_HIDDEN_DIM)
     parser.add_argument("--batch_size", type=int, default=BATCH_SIZE)
@@ -224,7 +208,6 @@ if __name__ == "__main__":
     parser.add_argument("--val_split", type=float, default=VAL_SPLIT)
     parser.add_argument("--seed", type=int, default=SEED)
     parser.add_argument("--num_workers", type=int, default=NUM_WORKERS)
-    parser.add_argument("--output_dir", default="./output")
+    parser.add_argument("--output_dir", default=str(Path(__file__).resolve().parent / "output"))
     args = parser.parse_args()
-    args.window_temporal_impute = WINDOW_TEMPORAL_IMPUTE and (not args.no_window_temporal_impute)
     main(args)

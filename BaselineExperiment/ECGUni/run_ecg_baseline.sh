@@ -55,7 +55,7 @@ else
 fi
 
 # Step 2: Train ECG classification model
-echo "=== Step 2: Train ECG ARDS severity classification model (LoRA on encoder+proj by default; use --no_lora to disable) ==="
+echo "=== Step 2: Train ECG ARDS severity classification model (default: no LoRA, frozen encoder) ==="
 python "${TRAIN_SCRIPT}" \
   --csv_path "${CLASSIFIED_CSV}" \
   --ecg_ckpt "${ECG_CKPT}" \

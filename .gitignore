@@ -13,6 +13,10 @@ experiment1/run_full_match_partial.csv
 # Logs and outputs
 logs/
 *.log
+*.out
+*.err
+*.stdout
+*.stderr
 experiment1/baseline/output/
 experiment1/baseline2/output/
 experiment1/baseline3/output/

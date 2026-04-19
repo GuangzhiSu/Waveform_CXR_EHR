@@ -1,7 +1,15 @@
-"""EHR-only temporal classifier: unified EHR encoder + pooled stats + head."""
+"""EHR trend model: EHR Transformer encoder -> pooled sequence embedding -> 3-class trend head."""
+from __future__ import annotations
+
+from pathlib import Path
+import sys
+
 import torch
 import torch.nn as nn
 
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 from models.encoders.ehr import build_ehr_encoder
 
 
@@ -27,24 +35,18 @@ class ClassificationHead(nn.Module):
         return self.net(x)
 
 
-class EHRClassificationBaseline(nn.Module):
-    """
-    Input: padded EHR sequence (B, T, F) + mask (B, T).
-    Encode each row -> (B, T, D), then pool stats over valid rows and classify.
-    """
-
+class EHRTrendBaseline(nn.Module):
     def __init__(
         self,
         input_dim: int,
         num_classes: int = 3,
         embed_dim: int = 256,
         pooling_stats=("mean", "median", "max", "min", "std"),
-        encoder_kind: str = "mlp",
         head_hidden_dim: int = 256,
     ):
         super().__init__()
-        self.encoder_kind = encoder_kind.lower()
-        self.encoder = build_ehr_encoder(self.encoder_kind, input_dim=input_dim, embed_dim=embed_dim)
+        # Use unified EHR Transformer encoder directly.
+        self.encoder = build_ehr_encoder("transformer", input_dim=input_dim, embed_dim=embed_dim)
         self.pooling_stats = tuple(pooling_stats)
         self.embed_dim = embed_dim
         self.head = ClassificationHead(
@@ -71,18 +73,10 @@ class EHRClassificationBaseline(nn.Module):
         return torch.cat(outs, dim=0)
 
     def forward(self, ehr_seq: torch.Tensor, ehr_mask: torch.Tensor):
-        b, t, f = ehr_seq.shape
-        if self.encoder_kind == "transformer":
-            z = self.encoder(ehr_seq, attention_mask=ehr_mask)
-        elif self.encoder_kind == "contrastive":
-            x = ehr_seq.view(b * t, f)
-            z = self.encoder(x, normalize=False).view(b, t, self.embed_dim)
-        else:
-            x = ehr_seq.view(b * t, f)
-            z = self.encoder(x).view(b, t, self.embed_dim)
-
+        # Transformer encoder returns (B, T, D) for sequence input.
+        z = self.encoder(ehr_seq, attention_mask=ehr_mask)
         pooled = []
-        for i in range(b):
+        for i in range(z.size(0)):
             valid = z[i][ehr_mask[i]]
             if valid.size(0) == 0:
                 valid = z[i, :1]

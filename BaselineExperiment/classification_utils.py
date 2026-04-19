@@ -69,6 +69,8 @@ def print_trainable_param_counts(model: torch.nn.Module, tag: str = "model") -> 
     prefixes = (
         ("cxr_encoder.vit", "cxr_encoder.vit"),
         ("cxr_encoder.proj", "cxr_encoder.proj"),
+        ("signal_encoder.encoder", "signal_encoder.encoder"),
+        ("signal_encoder.proj", "signal_encoder.proj"),
         ("head", "head"),
     )
     parts = []
@@ -230,6 +232,29 @@ def print_model_forward_spread(
         print(
             f"  [diag {tag} forward] logits max |Δ| vs batch[0]: {spread:.6f}  "
             f"(~0 => identical logits, often empty/constant input or collapsed head)"
+        )
+    model.train()
+
+
+def print_multimodal_forward_spread(
+    model,
+    train_loader,
+    device: torch.device,
+    batch=None,
+) -> None:
+    """One train batch: ECG+CXR multimodal logits spread vs first sample (collapse check)."""
+    model.eval()
+    if batch is None:
+        batch = next(iter(train_loader))
+    with torch.no_grad():
+        cxr = batch["cxr"].to(device)
+        sig = batch["signal"].to(device)
+        logits = model(cxr, sig)
+    if logits.size(0) > 1:
+        spread = (logits - logits[0:1]).abs().max().item()
+        print(
+            f"  [diag MM forward] logits max |Δ| vs batch[0]: {spread:.6f}  "
+            f"(~0 => identical logits, often empty/constant inputs or collapsed head)"
         )
     model.train()
 

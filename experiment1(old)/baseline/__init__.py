@@ -20,7 +20,7 @@ def __getattr__(name):
 
         return FusionBaseline
     if name == "SignalEncoder":
-        from .model import SignalEncoder
+        from .signal_encoder import SignalEncoder
 
         return SignalEncoder
     if name == "EHREncoder":

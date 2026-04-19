@@ -9,18 +9,54 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
 #SBATCH -G 1
-#SBATCH -o logs/%x-%j.out
-#SBATCH -e logs/%x-%j.err
+# Write to submit-directory (no logs/ subdir required; avoids sbatch -o relative-path failures)
+#SBATCH -o ehr-ards-baseline-%j.out
+#SBATCH -e ehr-ards-baseline-%j.err
 
 # EHR baseline: extract EHR+classified data -> train EHR-only ARDS severity
 set -e
-if [[ -n "${SLURM_SUBMIT_DIR}" ]]; then
-  PROJECT_DIR="${SLURM_SUBMIT_DIR}"
-  SCRIPT_DIR="${PROJECT_DIR}/BaselineExperiment/EHRUni"
+
+# Resolve Waveform_CXR_EHR repo root (directory that contains data/supertable_columns_completed.csv).
+# Important: under sbatch, BASH_SOURCE may point at a Slurm spool copy — do not rely on it for PROJECT_DIR.
+_find_project_root_from() {
+  local dir="$1"
+  [[ -z "$dir" ]] && return 1
+  dir="$(cd "$dir" && pwd)"
+  local guard=0
+  while [[ "$dir" != "/" && guard -lt 64 ]]; do
+    if [[ -f "$dir/data/supertable_columns_completed.csv" ]]; then
+      echo "$dir"
+      return 0
+    fi
+    dir="$(dirname "$dir")"
+    guard=$((guard + 1))
+  done
+  return 1
+}
+
+if [[ -n "${SLURM_SUBMIT_DIR:-}" ]]; then
+  if ! PROJECT_DIR="$(_find_project_root_from "${SLURM_SUBMIT_DIR}")"; then
+    echo "ERROR: Could not find project root from SLURM_SUBMIT_DIR=${SLURM_SUBMIT_DIR} (expected .../data/supertable_columns_completed.csv)." >&2
+    echo "       Submit from anywhere under the repo, or set WAVEFORM_CXR_ROOT to the repo path." >&2
+    if [[ -n "${WAVEFORM_CXR_ROOT:-}" ]] && [[ -f "${WAVEFORM_CXR_ROOT}/data/supertable_columns_completed.csv" ]]; then
+      PROJECT_DIR="$(cd "${WAVEFORM_CXR_ROOT}" && pwd)"
+      echo "       Using WAVEFORM_CXR_ROOT=${PROJECT_DIR}" >&2
+    else
+      exit 1
+    fi
+  fi
 else
-  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  PROJECT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+  _SCRIPT_PATH="${BASH_SOURCE[0]}"
+  if command -v readlink >/dev/null 2>&1 && readlink -f / >/dev/null 2>&1; then
+    _SCRIPT_PATH="$(readlink -f "${_SCRIPT_PATH}")"
+  else
+    _SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+  fi
+  SCRIPT_DIR_LOCAL="$(dirname "${_SCRIPT_PATH}")"
+  PROJECT_DIR="$(cd "${SCRIPT_DIR_LOCAL}/../.." && pwd)"
 fi
+
+SCRIPT_DIR="${PROJECT_DIR}/BaselineExperiment/EHRUni"
 
 DATA_DIR="${PROJECT_DIR}/data"
 ENRICHED_CSV="${DATA_DIR}/p2f_vent_fio2_enriched.csv"
