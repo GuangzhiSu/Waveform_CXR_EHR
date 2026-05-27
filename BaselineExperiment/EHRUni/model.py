@@ -89,3 +89,47 @@ class EHRClassificationBaseline(nn.Module):
             pooled.append(self._pool_one(valid))
         pooled = torch.stack(pooled, dim=0)
         return self.head(pooled)
+
+
+class EHRClassificationAverageBaseline(nn.Module):
+    """
+    Input: padded EHR sequence (B, T, F) + mask (B, T).
+    Encode each row -> (B, T, D), then average valid rows and classify.
+    This variant does not concatenate multiple pooling statistics.
+    """
+
+    def __init__(
+        self,
+        input_dim: int,
+        num_classes: int = 3,
+        embed_dim: int = 256,
+        encoder_kind: str = "mlp",
+    ):
+        super().__init__()
+        self.encoder_kind = encoder_kind.lower()
+        self.encoder = build_ehr_encoder(self.encoder_kind, input_dim=input_dim, embed_dim=embed_dim)
+        self.embed_dim = embed_dim
+        self.classifier = nn.Linear(embed_dim, num_classes)
+        nn.init.xavier_uniform_(self.classifier.weight)
+        if self.classifier.bias is not None:
+            nn.init.zeros_(self.classifier.bias)
+
+    def forward(self, ehr_seq: torch.Tensor, ehr_mask: torch.Tensor):
+        b, t, f = ehr_seq.shape
+        if self.encoder_kind == "transformer":
+            z = self.encoder(ehr_seq, attention_mask=ehr_mask)
+        elif self.encoder_kind == "contrastive":
+            x = ehr_seq.view(b * t, f)
+            z = self.encoder(x, normalize=False).view(b, t, self.embed_dim)
+        else:
+            x = ehr_seq.view(b * t, f)
+            z = self.encoder(x).view(b, t, self.embed_dim)
+
+        pooled = []
+        for i in range(b):
+            valid = z[i][ehr_mask[i]]
+            if valid.size(0) == 0:
+                valid = z[i, :1]
+            pooled.append(valid.mean(dim=0))
+        pooled = torch.stack(pooled, dim=0)
+        return self.classifier(pooled)
