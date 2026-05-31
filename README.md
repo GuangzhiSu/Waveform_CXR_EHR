@@ -42,8 +42,14 @@ flowchart TD
     ST[MIMIC Supertables PKL<br/>per hadm_id] --> EX1[extract_p2f_rows.py]
     ST --> EX2[extract_p2f_or_s2f_rows.py]
 
-    EX1 --> P2F[p2f_vent_fio2_valid_rows.csv<br/>~120k 行, 仅 p2f]
     EX2 --> P2FS[p2f_or_s2f_vent_fio2_valid_rows.csv<br/>~1.08M 行, p2f 或 s2f]
+
+    P2FS --> ENR24[enrich_or_s2f_modality_window.py]
+    ENR24 --> CXR_CAT[p2f_or_s2f_cxr_catalog.csv]
+    ENR24 --> ECG_CAT[p2f_or_s2f_ecg_catalog.csv]
+    ENR24 --> ANCH_MOD[p2f_or_s2f_anchor_modality_window.csv]
+
+    EX1 --> P2F[p2f_vent_fio2_valid_rows.csv<br/>~120k 行, 仅 p2f]
 
     P2F --> ENR[enrich_p2f_cxr_ecg_lookback.py]
     ENR --> ENRICH[p2f_vent_fio2_enriched.csv<br/>~120k 行 + CXR/ECG 匹配]
@@ -80,6 +86,10 @@ flowchart TD
 |------|-----------|----------|------|
 | `p2f_vent_fio2_valid_rows.csv` | 120,060 | `data/extract_p2f_rows.py` | 所有 **`p2f_vent_fio2` 非空** 的 supertable 行；166 列 EHR 特征 + `hadm_id` |
 | `p2f_or_s2f_vent_fio2_valid_rows.csv` | 1,076,516 | `data/extract_p2f_or_s2f_rows.py` | **`p2f_vent_fio2` 或 `s2f_vent_fio2` 至少一个非空**；在 p2f-only 基础上多了 `has_s2f_vent_fio2`、`has_p2f_vent_fio2`、`s2f/p2f_vent_fio2_severity`、`*_severity_change_12to24h` 等列；**EHRTrend / EHRWindowTransformer 的 anchor 表** |
+| `p2f_or_s2f_cxr_catalog.csv` | — | `data/enrich_or_s2f_modality_window.py` | cohort 内所有 in-admission **CXR**（`dicom_id`, `subject_id`, `hadm_id`, `supertable_datetime`）；供 `[t−24h, t−12h]` window 索引 |
+| `p2f_or_s2f_cxr_catalog_labeled.csv` | ~166k | `data/enrich_cxr_catalog_anchor_labels.py` | 每条 CXR 对齐 **12–24h 后的 anchor**，附带 `has_s2f/p2f`、severity、`*_severity_change_12to24h`（长表，一对多） |
+| `p2f_or_s2f_ecg_catalog.csv` | — | 同上 | cohort 内所有 in-admission **ECG**（`wf_*`, `subject_id`, `hadm_id`） |
+| `p2f_or_s2f_anchor_modality_window.csv` | 1,076,516 | 同上 | 每个 anchor + `CXR_window_count`, `ECG_window_count`, `CXR_signal`, `ECG_signal`（窗口内是否有模态） |
 
 两者共同列：`index`（时间戳）、 demographics、labs、vitals、vent、SOFA 等 supertable 全部 EHR 字段。
 
@@ -151,6 +161,13 @@ python data/extract_p2f_rows.py
 python data/extract_p2f_or_s2f_rows.py
 # 或: sbatch data/run_extract_p2f_or_s2f_rows.sh
 # → data/p2f_or_s2f_vent_fio2_valid_rows.csv
+
+# Step 1c: p2f_or_s2f 的 CXR/ECG [t-24h, t-12h] 模态目录 + anchor 窗口标记
+python data/enrich_or_s2f_modality_window.py
+# 或: sbatch data/run_enrich_or_s2f_modality_window.sh
+# → data/p2f_or_s2f_cxr_catalog.csv, p2f_or_s2f_ecg_catalog.csv,
+#    p2f_or_s2f_anchor_modality_window.csv
+# 可选 --write-matches 输出 long-format 匹配表
 
 # Step 2: CXR/ECG lookback enrich（默认读 p2f-only；可 --input 指定 or_s2f）
 python data/enrich_p2f_cxr_ecg_lookback.py \

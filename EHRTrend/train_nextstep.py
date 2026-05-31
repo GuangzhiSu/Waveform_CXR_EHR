@@ -44,15 +44,15 @@ def load_pretrained_row_encoder_and_disc_heads(
 
 
 def _collect_window_lengths(dataset) -> np.ndarray:
-    """Per-anchor count of EHR rows in [t-24h, t-12h]; minimum 1 (padded row)."""
+    """Per-anchor count of EHR rows in [t-24h, t-12h]."""
     if isinstance(dataset, Subset):
         base = dataset.dataset
         return np.array(
-            [max(1, int(base._window_indices(int(i)).size)) for i in dataset.indices],
+            [int(base._window_indices(int(i)).size) for i in dataset.indices],
             dtype=np.int32,
         )
     return np.array(
-        [max(1, int(dataset._window_indices(i).size)) for i in range(len(dataset))],
+        [int(dataset._window_indices(i).size) for i in range(len(dataset))],
         dtype=np.int32,
     )
 

@@ -11,7 +11,7 @@ import pandas as pd
 import torch
 from torch.utils.data import Dataset
 
-from dataset import FeatureSpec, _parse_mapping, _to_bool
+from dataset import FeatureSpec, _parse_mapping, _to_bool, drop_anchors_without_window
 
 _BE = Path(__file__).resolve().parents[1] / "BaselineExperiment"
 for _p in (_BE, _BE / "CXRUni"):
@@ -262,8 +262,14 @@ class MultimodalNextStepDataset(Dataset):
             b = starts[j + 1] if j + 1 < len(starts) else len(hg)
             self.by_group[int(g)] = (ht[a:b], hi[a:b])
 
+        n_anchors = len(self.anchor_df)
+        window_sizes = np.array(
+            [self._window_indices(i).size for i in range(n_anchors)], dtype=np.int32
+        )
+        keep = drop_anchors_without_window(n_anchors, window_sizes)
+        self._subset_anchors(keep)
         seq_lens = np.array(
-            [max(1, int(self._window_indices(i).size)) for i in range(len(self.anchor_df))], dtype=np.int32
+            [self._window_indices(i).size for i in range(len(self.anchor_df))], dtype=np.int32
         )
         print(
             f"  MultimodalNextStepDataset: n={len(self.anchor_df):,}, features={self.input_dim}, "
@@ -272,6 +278,17 @@ class MultimodalNextStepDataset(Dataset):
         print(
             f"  Sequence length stats: min={seq_lens.min()}, median={int(np.median(seq_lens))}, max={seq_lens.max()}"
         )
+
+    def _subset_anchors(self, keep: np.ndarray) -> None:
+        self.anchor_df = self.anchor_df.iloc[keep].reset_index(drop=True)
+        self.anchor_num = self.anchor_num.iloc[keep].reset_index(drop=True)
+        self.anchor_pct = self.anchor_pct[keep]
+        self.anchor_time_ns = self.anchor_time_ns[keep]
+        self.anchor_group = self.anchor_group[keep]
+        self.anchor_has_s2f = self.anchor_has_s2f[keep]
+        self.anchor_has_p2f = self.anchor_has_p2f[keep]
+        self.anchor_s2f_cls = self.anchor_s2f_cls[keep]
+        self.anchor_p2f_cls = self.anchor_p2f_cls[keep]
 
     def _numeric_frame(self, df: pd.DataFrame) -> pd.DataFrame:
         out = {}
@@ -383,29 +400,20 @@ class MultimodalNextStepDataset(Dataset):
     def __getitem__(self, idx: int):
         win = self._window_indices(idx)
         if win.size == 0:
-            ehr = np.zeros((1, self.input_dim), dtype=np.float32)
-            s2f_step = np.array([-1], dtype=np.int64)
-            p2f_step = np.array([-1], dtype=np.int64)
-            s2f_ok = np.array([False], dtype=bool)
-            p2f_ok = np.array([False], dtype=bool)
-            cxrs = [torch.zeros(3, 224, 224)]
-            ecgs = [torch.zeros(12, self.ecg_target_len)]
-            m_cxr = [False]
-            m_ecg = [False]
-        else:
-            ehr = self.history_pct[win]
-            s2f_step = self.hist_s2f_cls[win]
-            p2f_step = self.hist_p2f_cls[win]
-            s2f_ok = self.hist_has_s2f[win] & (s2f_step >= 0)
-            p2f_ok = self.hist_has_p2f[win] & (p2f_step >= 0)
-            cxrs, ecgs, m_cxr, m_ecg = [], [], [], []
-            for wi in win:
-                row = self.history_df.iloc[int(wi)]
-                cxr, ecg, hc, he = self._load_row_modalities(row)
-                cxrs.append(cxr)
-                ecgs.append(ecg)
-                m_cxr.append(hc)
-                m_ecg.append(he)
+            raise IndexError(f"anchor {idx} has empty lookback window (should have been filtered)")
+        ehr = self.history_pct[win]
+        s2f_step = self.hist_s2f_cls[win]
+        p2f_step = self.hist_p2f_cls[win]
+        s2f_ok = self.hist_has_s2f[win] & (s2f_step >= 0)
+        p2f_ok = self.hist_has_p2f[win] & (p2f_step >= 0)
+        cxrs, ecgs, m_cxr, m_ecg = [], [], [], []
+        for wi in win:
+            row = self.history_df.iloc[int(wi)]
+            cxr, ecg, hc, he = self._load_row_modalities(row)
+            cxrs.append(cxr)
+            ecgs.append(ecg)
+            m_cxr.append(hc)
+            m_ecg.append(he)
 
         return {
             "ehr_seq": torch.from_numpy(ehr).float(),

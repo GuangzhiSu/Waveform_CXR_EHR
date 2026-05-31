@@ -88,11 +88,11 @@ def _collect_window_lengths(dataset) -> np.ndarray:
     if isinstance(dataset, Subset):
         base = dataset.dataset
         return np.array(
-            [max(1, int(base._window_indices(int(i)).size)) for i in dataset.indices],
+            [int(base._window_indices(int(i)).size) for i in dataset.indices],
             dtype=np.int32,
         )
     return np.array(
-        [max(1, int(dataset._window_indices(i).size)) for i in range(len(dataset))],
+        [int(dataset._window_indices(i).size) for i in range(len(dataset))],
         dtype=np.int32,
     )
 

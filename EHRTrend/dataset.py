@@ -38,6 +38,25 @@ class FeatureSpec:
     default_raw: str
 
 
+def drop_anchors_without_window(
+    n_anchors: int,
+    window_sizes: np.ndarray,
+    *,
+    label: str = "anchors",
+) -> np.ndarray:
+    """Return row indices whose lookback window has at least one history row."""
+    keep = np.flatnonzero(window_sizes > 0)
+    n_skip = n_anchors - len(keep)
+    if n_skip:
+        print(
+            f"  Skipped {n_skip:,}/{n_anchors:,} {label} with empty lookback window "
+            f"({100.0 * n_skip / max(n_anchors, 1):.1f}%)"
+        )
+    if len(keep) == 0:
+        raise ValueError(f"No {label} with non-empty lookback window")
+    return keep.astype(np.int64, copy=False)
+
+
 class EHRTrendDataset(Dataset):
     """One sample = all EHR rows in [t-24h, t-12h] for same subject; label is trend_label."""
 
@@ -127,8 +146,15 @@ class EHRTrendDataset(Dataset):
             b = starts[j + 1] if j + 1 < len(starts) else len(hs)
             self.by_subject[int(s)] = (ht[a:b], hi[a:b])
 
-        seq_lens = np.array([self._window_indices(i).size for i in range(len(self.anchor_df))], dtype=np.int32)
-        seq_lens[seq_lens == 0] = 1
+        n_anchors = len(self.anchor_df)
+        window_sizes = np.array(
+            [self._window_indices(i).size for i in range(n_anchors)], dtype=np.int32
+        )
+        keep = drop_anchors_without_window(n_anchors, window_sizes)
+        self._subset_anchors(keep)
+        seq_lens = np.array(
+            [self._window_indices(i).size for i in range(len(self.anchor_df))], dtype=np.int32
+        )
 
         print(
             f"  EHR trend dataset: n={len(self.anchor_df):,}, features={self.input_dim}, "
@@ -138,6 +164,14 @@ class EHRTrendDataset(Dataset):
             f"  Sequence length stats: min={seq_lens.min()}, median={int(np.median(seq_lens))}, "
             f"max={seq_lens.max()}"
         )
+
+    def _subset_anchors(self, keep: np.ndarray) -> None:
+        self.anchor_df = self.anchor_df.iloc[keep].reset_index(drop=True)
+        self.anchor_num = self.anchor_num.iloc[keep].reset_index(drop=True)
+        self.anchor_pct = self.anchor_pct[keep]
+        self.anchor_labels = self.anchor_labels[keep]
+        self.anchor_subject = self.anchor_subject[keep]
+        self.anchor_time_ns = self.anchor_time_ns[keep]
 
     def _numeric_frame(self, df: pd.DataFrame) -> pd.DataFrame:
         out = {}
@@ -207,9 +241,8 @@ class EHRTrendDataset(Dataset):
     def __getitem__(self, idx):
         win = self._window_indices(idx)
         if win.size == 0:
-            seq = np.zeros((1, self.input_dim), dtype=np.float32)
-        else:
-            seq = self.history_pct[win]
+            raise IndexError(f"anchor {idx} has empty lookback window (should have been filtered)")
+        seq = self.history_pct[win]
         return {
             "ehr_seq": torch.from_numpy(seq).float(),
             "label": int(self.anchor_labels[idx]),
