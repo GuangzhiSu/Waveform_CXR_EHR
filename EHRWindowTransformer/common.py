@@ -33,6 +33,9 @@ def stratify_labels_from_anchor(
 
 
 def collate_cxr_window_batch(batch):
+    batch = [b for b in batch if b["cxr_mask"].any()]
+    if not batch:
+        return None
     lengths = [b["cxr_seq"].shape[0] for b in batch]
     max_len = max(lengths)
     bsz = len(batch)
@@ -63,6 +66,9 @@ def collate_cxr_window_batch(batch):
 
 
 def collate_ecg_window_batch(batch):
+    batch = [b for b in batch if b["ecg_mask"].any()]
+    if not batch:
+        return None
     lengths = [b["ecg_seq"].shape[0] for b in batch]
     max_len = max(lengths)
     bsz = len(batch)
@@ -75,7 +81,10 @@ def collate_ecg_window_batch(batch):
     anchor_has_p2f = torch.zeros(bsz, dtype=torch.bool)
     for i, b in enumerate(batch):
         t = b["ecg_seq"].shape[0]
-        seq[i, :t] = b["ecg_seq"]
+        ecg = b["ecg_seq"]
+        if not torch.isfinite(ecg).all():
+            ecg = torch.nan_to_num(ecg, nan=0.0, posinf=0.0, neginf=0.0)
+        seq[i, :t] = ecg
         mask[i, :t] = b["ecg_mask"][:t]
         c = b["anchor_s2f_cls"]
         anchor_s2f[i] = c if c >= 0 else -1

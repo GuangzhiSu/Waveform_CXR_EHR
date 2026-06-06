@@ -6,7 +6,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 import numpy as np
 import torch
@@ -15,6 +15,7 @@ from torch.utils.data import DataLoader, Subset
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 _EXP = Path(__file__).resolve().parent
+_CXR_EXP = PROJECT_ROOT / "CXREncoderTransformer"
 _EWT = PROJECT_ROOT / "EHRWindowTransformer"
 _EXP_OLD = PROJECT_ROOT / "experiment1(old)"
 for _p in (
@@ -22,8 +23,9 @@ for _p in (
     PROJECT_ROOT / "BaselineExperiment",
     PROJECT_ROOT / "EHRTrend",
     _EWT,
-    _EXP,
     _EXP_OLD,
+    _CXR_EXP,
+    _EXP,
 ):
     if _p.is_dir():
         sys.path.insert(0, str(_p))
@@ -36,21 +38,107 @@ from eval_reports import evaluate_split_both_heads  # noqa: E402
 from model import ECGEncoderTransformer  # noqa: E402
 
 
-def masked_ce(logits: torch.Tensor, y: torch.Tensor, valid: torch.Tensor) -> torch.Tensor:
+def masked_ce(
+    logits: torch.Tensor,
+    y: torch.Tensor,
+    valid: torch.Tensor,
+    class_weight: Optional[torch.Tensor] = None,
+    label_smoothing: float = 0.0,
+) -> torch.Tensor:
     if not valid.any():
         return logits.new_tensor(0.0)
-    return F.cross_entropy(logits[valid], y[valid])
+    return F.cross_entropy(
+        logits[valid],
+        y[valid],
+        weight=class_weight,
+        label_smoothing=label_smoothing,
+    )
 
 
-def forward_loss_from_logits_parts(batch: dict, log_s: torch.Tensor, log_p: torch.Tensor) -> tuple:
+def _inverse_freq_weights(
+    counts: np.ndarray,
+    num_classes: int,
+    device: torch.device,
+    *,
+    clip_min: float = 0.25,
+    clip_max: float = 4.0,
+) -> torch.Tensor:
+    c = np.bincount(counts, minlength=num_classes).astype(np.float64)
+    c = np.maximum(c, 1.0)
+    w = 1.0 / c
+    w = np.clip(w, clip_min, clip_max)
+    w = w * (num_classes / w.sum())
+    return torch.tensor(w, dtype=torch.float32, device=device)
+
+
+def _head_class_weights(
+    ds,
+    indices: np.ndarray,
+    has_attr: str,
+    cls_attr: str,
+    num_classes: int,
+    device: torch.device,
+) -> torch.Tensor:
+    has = getattr(ds, has_attr)
+    cls = getattr(ds, cls_attr)
+    labels = []
+    for i in indices:
+        if has[i] and cls[i] >= 0:
+            labels.append(int(cls[i]))
+    if not labels:
+        return torch.ones(num_classes, device=device)
+    return _inverse_freq_weights(np.asarray(labels, dtype=np.int64), num_classes, device)
+
+
+def forward_loss_parts(
+    batch: dict,
+    log_s: torch.Tensor,
+    log_p: torch.Tensor,
+    *,
+    p2f_loss_weight: float = 1.0,
+    s2f_class_weight: Optional[torch.Tensor] = None,
+    p2f_class_weight: Optional[torch.Tensor] = None,
+    label_smoothing: float = 0.0,
+) -> Tuple[torch.Tensor, dict]:
     device = log_s.device
     s_tgt = batch["anchor_s2f"].to(device)
     p_tgt = batch["anchor_p2f"].to(device)
     s_ok = batch["anchor_has_s2f"].to(device) & (s_tgt >= 0)
     p_ok = batch["anchor_has_p2f"].to(device) & (p_tgt >= 0)
-    loss_s = masked_ce(log_s, s_tgt, s_ok)
-    loss_p = masked_ce(log_p, p_tgt, p_ok)
-    return loss_s + loss_p, {"loss_s2f": loss_s, "loss_p2f": loss_p, "log_s2f": log_s, "log_p2f": log_p}
+    loss_s = masked_ce(log_s, s_tgt, s_ok, s2f_class_weight, label_smoothing=label_smoothing)
+    loss_p = masked_ce(log_p, p_tgt, p_ok, p2f_class_weight, label_smoothing=label_smoothing)
+    n_s = int(s_ok.sum())
+    n_p = int(p_ok.sum())
+    if n_s and n_p:
+        total = (loss_s * n_s + loss_p * p2f_loss_weight * n_p) / (n_s + p2f_loss_weight * n_p)
+    elif n_s:
+        total = loss_s
+    elif n_p:
+        total = loss_p
+    else:
+        total = loss_s + loss_p
+    return total, {"loss_s2f": loss_s, "loss_p2f": loss_p, "log_s2f": log_s, "log_p2f": log_p}
+
+
+def forward_loss_from_logits_parts(
+    batch: dict,
+    log_s: torch.Tensor,
+    log_p: torch.Tensor,
+    *,
+    p2f_loss_weight: float = 1.0,
+    s2f_class_weight: Optional[torch.Tensor] = None,
+    p2f_class_weight: Optional[torch.Tensor] = None,
+    label_smoothing: float = 0.0,
+) -> tuple:
+    return forward_loss_parts(
+        batch,
+        log_s,
+        log_p,
+        p2f_loss_weight=p2f_loss_weight,
+        s2f_class_weight=s2f_class_weight,
+        p2f_class_weight=p2f_class_weight,
+        label_smoothing=label_smoothing,
+    )
 
 
 def _count_params(model: ECGEncoderTransformer) -> tuple:
@@ -84,6 +172,20 @@ def _param_delta_l2(model: ECGEncoderTransformer, before: dict) -> float:
             continue
         sq += float((p.detach() - before[n]).pow(2).sum())
     return sq**0.5
+
+
+def _restore_trainable(model: ECGEncoderTransformer, snap: dict) -> None:
+    with torch.no_grad():
+        for n, p in model.named_parameters():
+            if p.requires_grad and n in snap:
+                p.copy_(snap[n])
+
+
+def _trainable_finite(model: ECGEncoderTransformer) -> bool:
+    for p in model.parameters():
+        if p.requires_grad and not torch.isfinite(p).all():
+            return False
+    return True
 
 
 def _print_module_trainable(model: ECGEncoderTransformer) -> None:
@@ -121,26 +223,55 @@ def _hist_str(counts: np.ndarray) -> str:
     return f"counts={counts.tolist()} pct=[{', '.join(f'{x:.1f}' for x in pct)}]%"
 
 
+def _n_unique_preds(counts: np.ndarray) -> int:
+    return int(np.count_nonzero(counts))
+
+
 @torch.no_grad()
-def eval_loader(model, loader, device, collect_pred_hist: bool = False) -> dict:
+def eval_loader(
+    model,
+    loader,
+    device,
+    collect_pred_hist: bool = False,
+    *,
+    p2f_loss_weight: float = 1.0,
+    s2f_class_weight: Optional[torch.Tensor] = None,
+    p2f_class_weight: Optional[torch.Tensor] = None,
+) -> dict:
     model.eval()
     tot = 0.0
     n_batches = 0
+    n_skipped_nonfinite = 0
     acc_s_n = acc_s_d = acc_p_n = acc_p_d = 0.0
     ce_s_sum = ce_p_sum = 0.0
     n_ce_s = n_ce_p = 0
     pred_s = np.zeros(3, dtype=np.int64)
     pred_p = np.zeros(3, dtype=np.int64)
     for batch in loader:
+        if batch is None:
+            continue
         b = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
         log_s, log_p = model(b["ecg_seq"], b["ecg_mask"])
-        loss, _ = forward_loss_from_logits_parts(b, log_s, log_p)
+        if not (torch.isfinite(log_s).all() and torch.isfinite(log_p).all()):
+            n_skipped_nonfinite += 1
+            continue
+        loss, _ = forward_loss_parts(
+            b,
+            log_s,
+            log_p,
+            p2f_loss_weight=p2f_loss_weight,
+            s2f_class_weight=s2f_class_weight,
+            p2f_class_weight=p2f_class_weight,
+        )
+        if not torch.isfinite(loss):
+            n_skipped_nonfinite += 1
+            continue
         tot += float(loss)
         n_batches += 1
         s_ok = b["anchor_has_s2f"] & (b["anchor_s2f"] >= 0)
         p_ok = b["anchor_has_p2f"] & (b["anchor_p2f"] >= 0)
         if s_ok.any():
-            ce_s_sum += float(F.cross_entropy(log_s[s_ok], b["anchor_s2f"][s_ok]))
+            ce_s_sum += float(F.cross_entropy(log_s[s_ok], b["anchor_s2f"][s_ok], weight=s2f_class_weight))
             n_ce_s += 1
             pred = log_s[s_ok].argmax(1)
             acc_s_n += (pred == b["anchor_s2f"][s_ok]).float().sum().item()
@@ -149,7 +280,7 @@ def eval_loader(model, loader, device, collect_pred_hist: bool = False) -> dict:
                 for c in pred.cpu().numpy():
                     pred_s[int(c)] += 1
         if p_ok.any():
-            ce_p_sum += float(F.cross_entropy(log_p[p_ok], b["anchor_p2f"][p_ok]))
+            ce_p_sum += float(F.cross_entropy(log_p[p_ok], b["anchor_p2f"][p_ok], weight=p2f_class_weight))
             n_ce_p += 1
             pred = log_p[p_ok].argmax(1)
             acc_p_n += (pred == b["anchor_p2f"][p_ok]).float().sum().item()
@@ -163,18 +294,33 @@ def eval_loader(model, loader, device, collect_pred_hist: bool = False) -> dict:
         "ce_p2f": ce_p_sum / max(n_ce_p, 1),
         "acc_s2f": acc_s_n / max(acc_s_d, 1),
         "acc_p2f": acc_p_n / max(acc_p_d, 1),
+        "n_skipped_nonfinite": n_skipped_nonfinite,
     }
     if collect_pred_hist:
         out["pred_hist_s2f"] = pred_s
         out["pred_hist_p2f"] = pred_p
+        out["n_unique_pred_s2f"] = _n_unique_preds(pred_s)
+        out["n_unique_pred_p2f"] = _n_unique_preds(pred_p)
     return out
 
 
-def _resolve_ecg_ckpt(path: str) -> Optional[str]:
+def _resolve_ecg_ckpt(path: Optional[str]) -> Optional[str]:
+    from config import resolve_ecg_ckpt_path  # noqa: WPS433
+
     if path and os.path.isfile(path):
         return path
+    auto = resolve_ecg_ckpt_path()
+    if auto and os.path.isfile(auto):
+        if path and path != auto:
+            print(f"  NOTE: using discovered ECG ckpt: {auto}")
+        return auto
     if path:
         print(f"  WARNING: ECG checkpoint not found: {path}")
+    else:
+        print(
+            "  WARNING: no ECG ckpt under MedTVT-R1/CKPTS/ (.pt or .ckpt). "
+            "Encoder uses random init; pass --ecg_ckpt."
+        )
     return None
 
 
@@ -192,6 +338,16 @@ def main(args):
     print(f"ECGEncoderTransformer  device={device}")
     if device.type == "cuda":
         print(f"  GPU: {torch.cuda.get_device_name(0)}")
+    print(
+        f"  Loss: p2f_weight={args.p2f_loss_weight}  class_weights={args.use_class_weights}  "
+        f"label_smoothing={args.label_smoothing}  anchor_pool={args.anchor_pool}  "
+        f"include_anchor_slot={args.include_anchor_slot}"
+    )
+    if args.p2f_loss_weight > 2.0 or args.lr > 2e-4:
+        print(
+            "  WARNING: high p2f_loss_weight and/or lr often cause NaN on sparse p2f batches; "
+            "prefer --p2f_loss_weight 1.0 --lr 1e-4"
+        )
 
     if not Path(args.ecg_labeled_csv).is_file():
         raise FileNotFoundError(f"Labeled ECG CSV not found: {args.ecg_labeled_csv}")
@@ -204,6 +360,7 @@ def main(args):
         lookback_min_hours=args.lookback_min_hours,
         lookback_max_hours=args.lookback_max_hours,
         require_hours_in_window=not args.no_hours_filter,
+        drop_invalid_anchors=not args.keep_invalid_anchors,
     )
     n_all = len(full_ds)
     if args.max_samples and args.max_samples < n_all:
@@ -252,8 +409,12 @@ def main(args):
     )
 
     ecg_ckpt = _resolve_ecg_ckpt(args.ecg_ckpt)
+    ecg_dim = args.ecg_dim
+    if ecg_ckpt and ecg_ckpt.endswith(".ckpt") and ecg_dim < 1024:
+        ecg_dim = 1024
+        print(f"  Symile PL ckpt detected — using ecg_dim={ecg_dim}")
     model = ECGEncoderTransformer(
-        ecg_dim=args.ecg_dim,
+        ecg_dim=ecg_dim,
         d_model=args.d_model,
         num_transformer_layers=args.num_transformer_layers,
         num_heads=args.num_heads,
@@ -266,6 +427,7 @@ def main(args):
         input_channels=args.input_channels,
         sig_len=args.ecg_target_len,
         freeze_ecg=not args.unfreeze_ecg,
+        include_anchor_slot=args.include_anchor_slot,
     ).to(device)
     opt = torch.optim.AdamW(
         [p for p in model.parameters() if p.requires_grad],
@@ -275,10 +437,32 @@ def main(args):
 
     n_train, n_total = _count_params(model)
     print(f"  Parameters: trainable={n_train:,}  total={n_total:,}  lr={args.lr}  weight_decay={args.weight_decay}")
-    print(f"  ECG ckpt: {ecg_ckpt or 'none (random init)'}  freeze_ecg={not args.unfreeze_ecg}")
+    print(
+        f"  ECG ckpt: {ecg_ckpt or 'none (random init)'}  "
+        f"encoder={getattr(model, 'ecg_encoder_kind', '?')}  "
+        f"ecg_dim={model.ecg_dim}  freeze_ecg={not args.unfreeze_ecg}"
+    )
     _print_module_trainable(model)
     _anchor_label_stats(base, idx_val, "val")
     _anchor_label_stats(base, idx_train, "train")
+
+    s2f_w = p2f_w = None
+    if args.use_class_weights:
+        s2f_w = _head_class_weights(
+            base, idx_train, "anchor_has_s2f", "anchor_s2f_cls", args.num_classes, device
+        )
+        p2f_w = _head_class_weights(
+            base, idx_train, "anchor_has_p2f", "anchor_p2f_cls", args.num_classes, device
+        )
+        print(f"  s2f class weights: {s2f_w.detach().cpu().tolist()}")
+        print(f"  p2f class weights: {p2f_w.detach().cpu().tolist()}")
+
+    loss_kw = dict(
+        p2f_loss_weight=args.p2f_loss_weight,
+        s2f_class_weight=s2f_w,
+        p2f_class_weight=p2f_w,
+        label_smoothing=args.label_smoothing,
+    )
 
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -288,19 +472,76 @@ def main(args):
     stopped_early = False
     param_snap_start = _snapshot_trainable(model)
     w_before_step = None
+    logged_nonfinite_loss = False
+    logged_nonfinite_grad = False
 
     for epoch in range(args.epochs):
         model.train()
+        epoch_snap = _snapshot_trainable(model)
         tr = tr_s = tr_p = 0.0
         n_tr_batches = 0
+        n_skipped_nonfinite_loss = 0
+        n_skipped_nonfinite_grad = 0
+        n_rollback = 0
         last_grad_norm = 0.0
+        epoch_aborted_nan = False
         for batch_idx, batch in enumerate(train_loader):
+            if batch is None:
+                continue
             b = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
+            step_snap = _snapshot_trainable(model)
             log_s, log_p = model(b["ecg_seq"], b["ecg_mask"])
-            loss, parts = forward_loss_from_logits_parts(b, log_s, log_p)
+            loss, parts = forward_loss_parts(b, log_s, log_p, **loss_kw)
+            if not torch.isfinite(loss):
+                n_skipped_nonfinite_loss += 1
+                _restore_trainable(model, step_snap)
+                opt.zero_grad()
+                if not logged_nonfinite_loss:
+                    logged_nonfinite_loss = True
+                    s_ok_dbg = b["anchor_has_s2f"] & (b["anchor_s2f"] >= 0)
+                    p_ok_dbg = b["anchor_has_p2f"] & (b["anchor_p2f"] >= 0)
+                    log_std = (
+                        float(parts["log_s2f"][s_ok_dbg].std(dim=0).mean())
+                        if s_ok_dbg.any()
+                        else 0.0
+                    )
+                    print(
+                        f"  WARNING: non-finite loss at epoch {epoch + 1} batch {batch_idx} "
+                        f"(rollback step). loss={float(loss)}  "
+                        f"log_s2f_finite={bool(torch.isfinite(log_s).all())}  "
+                        f"log_p2f_finite={bool(torch.isfinite(log_p).all())}  "
+                        f"n_s2f={int(s_ok_dbg.sum())}  n_p2f={int(p_ok_dbg.sum())}  "
+                        f"log_s2f_std={log_std:.6f}  "
+                        f"valid_ecg_slots={int(b['ecg_mask'].sum())}/{b['ecg_mask'].numel()}"
+                    )
+                if not _trainable_finite(model):
+                    epoch_aborted_nan = True
+                    print(f"  ERROR: non-finite trainable weights after rollback at epoch {epoch + 1}")
+                    break
+                continue
             opt.zero_grad()
             loss.backward()
+            if args.max_grad_norm > 0:
+                torch.nn.utils.clip_grad_norm_(
+                    [p for p in model.parameters() if p.requires_grad],
+                    args.max_grad_norm,
+                )
             last_grad_norm = _grad_norm(model)
+            if not np.isfinite(last_grad_norm):
+                n_skipped_nonfinite_grad += 1
+                _restore_trainable(model, step_snap)
+                opt.zero_grad()
+                if not logged_nonfinite_grad:
+                    logged_nonfinite_grad = True
+                    print(
+                        f"  WARNING: non-finite grad at epoch {epoch + 1} batch {batch_idx} "
+                        f"(rollback step). grad_norm={last_grad_norm}  loss={float(loss):.4f}"
+                    )
+                if not _trainable_finite(model):
+                    epoch_aborted_nan = True
+                    print(f"  ERROR: non-finite trainable weights after grad rollback at epoch {epoch + 1}")
+                    break
+                continue
             if epoch == 0 and batch_idx == 0:
                 w_before_step = _snapshot_trainable(model)
             opt.step()
@@ -310,6 +551,12 @@ def main(args):
                 valid_ecg = int(b["ecg_mask"].sum())
                 s_ok = b["anchor_has_s2f"] & (b["anchor_s2f"] >= 0)
                 p_ok = b["anchor_has_p2f"] & (b["anchor_p2f"] >= 0)
+                with torch.no_grad():
+                    _, _, anchor_vec = model(
+                        b["ecg_seq"], b["ecg_mask"], return_anchor_vec=True
+                    )
+                    anchor_std = float(anchor_vec.std(dim=0).mean())
+                    log_std_s = float(parts["log_s2f"][s_ok].std(dim=0).mean()) if s_ok.any() else 0.0
                 print(
                     "  [train check epoch1 batch0] "
                     f"loss={float(loss):.4f}  loss_s2f={float(parts['loss_s2f']):.4f}  "
@@ -320,7 +567,8 @@ def main(args):
                     f"    batch: ecg_seq={tuple(b['ecg_seq'].shape)}  "
                     f"valid_ecg_slots={valid_ecg}/{b['ecg_mask'].numel()}  "
                     f"seq_len min/median/max={int(lens.min())}/{int(lens.median())}/{int(lens.max())}  "
-                    f"n_s2f={int(s_ok.sum())}  n_p2f={int(p_ok.sum())}"
+                    f"n_s2f={int(s_ok.sum())}  n_p2f={int(p_ok.sum())}  "
+                    f"anchor_vec_std={anchor_std:.6f}  log_s2f_std={log_std_s:.6f}"
                 )
                 if s_ok.any():
                     ps = parts["log_s2f"][s_ok].argmax(1).cpu().numpy()
@@ -332,11 +580,36 @@ def main(args):
             tr_s += float(parts["loss_s2f"])
             tr_p += float(parts["loss_p2f"])
             n_tr_batches += 1
-        tr /= max(n_tr_batches, 1)
-        tr_s /= max(n_tr_batches, 1)
-        tr_p /= max(n_tr_batches, 1)
+            if not _trainable_finite(model):
+                _restore_trainable(model, step_snap)
+                opt.zero_grad()
+                n_rollback += 1
+                epoch_aborted_nan = True
+                print(
+                    f"  ERROR: non-finite weights after opt.step at epoch {epoch + 1} batch {batch_idx} "
+                    f"(rolled back)"
+                )
+                break
+        if n_skipped_nonfinite_loss or n_skipped_nonfinite_grad or n_rollback:
+            print(
+                f"  train skipped: non-finite loss={n_skipped_nonfinite_loss}  "
+                f"non-finite grad={n_skipped_nonfinite_grad}  rollbacks={n_rollback}"
+            )
+        if epoch_aborted_nan:
+            _restore_trainable(model, epoch_snap)
+            print(f"  Restored trainable weights to start-of-epoch snapshot (epoch {epoch + 1})")
+            break
+        if n_tr_batches == 0:
+            tr = tr_s = tr_p = float("nan")
+            print(
+                "  WARNING: no training batches completed this epoch (all skipped); train_loss=nan"
+            )
+        else:
+            tr /= n_tr_batches
+            tr_s /= n_tr_batches
+            tr_p /= n_tr_batches
         epoch_param_delta = _param_delta_l2(model, param_snap_start) if epoch == 0 else None
-        st = eval_loader(model, val_loader, device, collect_pred_hist=True)
+        st = eval_loader(model, val_loader, device, collect_pred_hist=True, **loss_kw)
         print(
             f"Epoch {epoch + 1}/{args.epochs}  train_loss={tr:.4f}  "
             f"(s2f={tr_s:.4f} p2f={tr_p:.4f})  val_loss={st['loss']:.4f}  "
@@ -344,8 +617,11 @@ def main(args):
         )
         print(
             f"  val pred_s2f: {_hist_str(st['pred_hist_s2f'])}  "
-            f"val pred_p2f: {_hist_str(st['pred_hist_p2f'])}"
+            f"val pred_p2f: {_hist_str(st['pred_hist_p2f'])}  "
+            f"unique_classes(s2f/p2f)={st.get('n_unique_pred_s2f', '?')}/{st.get('n_unique_pred_p2f', '?')}"
         )
+        if st.get("n_skipped_nonfinite", 0):
+            print(f"  val skipped non-finite batches: {st['n_skipped_nonfinite']}")
         print(
             f"  train diagnostics: last_batch_grad_norm={last_grad_norm:.6f}  "
             f"param_l2={_param_l2(model):.4f}"
@@ -355,7 +631,12 @@ def main(args):
                 else ""
             )
         )
-        improved = st["loss"] < best_val - args.early_stop_min_delta
+        n_unique_s2f = int(st.get("n_unique_pred_s2f", 0))
+        improved = (
+            np.isfinite(st["loss"])
+            and st["loss"] < best_val - args.early_stop_min_delta
+            and n_unique_s2f >= args.min_unique_val_preds
+        )
         if improved:
             best_val = st["loss"]
             best_epoch = epoch
@@ -366,6 +647,15 @@ def main(args):
             )
         else:
             epochs_no_improve += 1
+            if (
+                np.isfinite(st["loss"])
+                and st["loss"] < best_val - args.early_stop_min_delta
+                and n_unique_s2f < args.min_unique_val_preds
+            ):
+                print(
+                    f"  NOTE: val loss improved but skipped best.pt "
+                    f"(unique s2f preds={n_unique_s2f} < {args.min_unique_val_preds})"
+                )
 
         if args.early_stop_patience > 0 and epochs_no_improve >= args.early_stop_patience:
             print(
@@ -375,11 +665,18 @@ def main(args):
             stopped_early = True
             break
 
-    torch.save(model.state_dict(), out_dir / "last.pt")
-    if (out_dir / "best.pt").is_file():
+    if _trainable_finite(model):
+        torch.save(model.state_dict(), out_dir / "last.pt")
+    else:
+        print("\nWARNING: skipping last.pt save (non-finite trainable weights)")
+    has_best = (out_dir / "best.pt").is_file()
+    if has_best:
         ck = torch.load(out_dir / "best.pt", map_location=device, weights_only=False)
         model.load_state_dict(ck["model"])
-    test_st = eval_loader(model, test_loader, device)
+        print(f"\nEvaluating with best checkpoint (epoch {best_epoch + 1})")
+    elif not _trainable_finite(model):
+        print("\nWARNING: no valid best.pt and last.pt has non-finite weights; test metrics unreliable")
+    test_st = eval_loader(model, test_loader, device, **loss_kw)
     print(
         f"\nTest (summary): loss={test_st['loss']:.4f}  "
         f"acc_s2f={test_st['acc_s2f']:.4f}  acc_p2f={test_st['acc_p2f']:.4f}"
@@ -398,7 +695,12 @@ def main(args):
         "ecg_labeled_csv": args.ecg_labeled_csv,
         "ecg_ckpt": ecg_ckpt,
         "lookback_hours": [args.lookback_max_hours, args.lookback_min_hours],
+        "include_anchor_slot": args.include_anchor_slot,
+        "p2f_loss_weight": args.p2f_loss_weight,
+        "use_class_weights": args.use_class_weights,
         "anchor_pool": args.anchor_pool,
+        "label_smoothing": args.label_smoothing,
+        "min_unique_val_preds": args.min_unique_val_preds,
         "freeze_ecg": not args.unfreeze_ecg,
         "best_val_loss": best_val,
         "best_epoch": best_epoch + 1 if best_epoch >= 0 else None,
@@ -419,6 +721,11 @@ if __name__ == "__main__":
     )
     p.add_argument("--ecg_labeled_csv", default=ECG_CATALOG_LABELED_CSV)
     p.add_argument("--no_hours_filter", action="store_true")
+    p.add_argument(
+        "--keep_invalid_anchors",
+        action="store_true",
+        help="Keep anchors whose ECG waveforms are missing or all-zero (default: drop them)",
+    )
     p.add_argument("--ecg_ckpt", default=ECG_CKPT)
     p.add_argument("--lookback_min_hours", type=int, default=LOOKBACK_MIN_HOURS)
     p.add_argument("--lookback_max_hours", type=int, default=LOOKBACK_MAX_HOURS)
@@ -434,6 +741,9 @@ if __name__ == "__main__":
     p.add_argument("--head_dropout", type=float, default=HEAD_DROPOUT)
     p.add_argument("--max_seq_length", type=int, default=MAX_SEQ_LENGTH)
     p.add_argument("--anchor_pool", type=str, default=ANCHOR_POOL, choices=["last", "mean"])
+    p.add_argument("--include_anchor_slot", action=argparse.BooleanOptionalAction, default=INCLUDE_ANCHOR_SLOT)
+    p.add_argument("--p2f_loss_weight", type=float, default=P2F_LOSS_WEIGHT)
+    p.add_argument("--use_class_weights", action=argparse.BooleanOptionalAction, default=USE_CLASS_WEIGHTS)
     p.add_argument("--unfreeze_ecg", action="store_true")
     p.add_argument("--batch_size", type=int, default=BATCH_SIZE)
     p.add_argument("--epochs", type=int, default=EPOCHS)
@@ -447,6 +757,9 @@ if __name__ == "__main__":
     p.add_argument("--max_samples", type=int, default=0)
     p.add_argument("--early_stop_patience", type=int, default=EARLY_STOP_PATIENCE)
     p.add_argument("--early_stop_min_delta", type=float, default=EARLY_STOP_MIN_DELTA)
+    p.add_argument("--max_grad_norm", type=float, default=MAX_GRAD_NORM)
+    p.add_argument("--label_smoothing", type=float, default=LABEL_SMOOTHING)
+    p.add_argument("--min_unique_val_preds", type=int, default=MIN_UNIQUE_VAL_PREDS)
     a = p.parse_args()
     if not a.max_samples:
         a.max_samples = 0

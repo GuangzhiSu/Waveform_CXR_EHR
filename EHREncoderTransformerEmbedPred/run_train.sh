@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH -J cxr-enc-tr
+#SBATCH -J ehr-enc-embed
 #SBATCH -t 24:00:00
 #SBATCH -A kamaleswaranlab
 #SBATCH -p gpu-common
@@ -12,13 +12,13 @@
 #SBATCH -o logs/%x-%j.out
 #SBATCH -e logs/%x-%j.err
 
-# CXREncoderTransformer: frozen ViT -> causal transformer -> dual MLP heads (s2f/p2f change).
+# EHREncoderTransformerEmbedPred: EHREncoderTransformer + anchor-embed prediction loss.
 
 set -euo pipefail
 
 if [[ -n "${SLURM_SUBMIT_DIR:-}" ]]; then
   PROJECT_DIR="${SLURM_SUBMIT_DIR}"
-  SCRIPT_DIR="${PROJECT_DIR}/CXREncoderTransformer"
+  SCRIPT_DIR="${PROJECT_DIR}/EHREncoderTransformerEmbedPred"
 else
   SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -26,16 +26,10 @@ fi
 
 TRAIN_SCRIPT="${SCRIPT_DIR}/train.py"
 OUTPUT_DIR="${SCRIPT_DIR}/output"
-MEDTVT_ROOT="$(cd "${PROJECT_DIR}/MedTVT-R1" 2>/dev/null && pwd || cd "${PROJECT_DIR}/../MedTVT-R1" 2>/dev/null && pwd || true)"
-if [[ -n "${MEDTVT_ROOT}" && -d "${MEDTVT_ROOT}/CKPTS/vit-base-patch16-224" ]]; then
-  VIT_PATH="${MEDTVT_ROOT}/CKPTS/vit-base-patch16-224"
-else
-  VIT_PATH="google/vit-base-patch16-224-in21k"
-fi
 mkdir -p "${PROJECT_DIR}/logs"
 cd "${PROJECT_DIR}" || exit 1
 
-export PYTHONPATH="${PROJECT_DIR}:${SCRIPT_DIR}:${PROJECT_DIR}/EHRWindowTransformer:${PROJECT_DIR}/EHRTrend:${PROJECT_DIR}/BaselineExperiment"
+export PYTHONPATH="${PROJECT_DIR}:${SCRIPT_DIR}:${PROJECT_DIR}/EHRTrend:${PROJECT_DIR}/BaselineExperiment"
 
 [[ -n "$(command -v conda)" ]] && {
   eval "$(conda shell.bash hook 2>/dev/null)" || true
@@ -51,12 +45,12 @@ else
   echo "WARNING: nvidia-smi not found on compute node"
 fi
 
-echo "  ViT encoder path: ${VIT_PATH}"
-
 python -u "${TRAIN_SCRIPT}" \
-  --cxr_labeled_csv "${PROJECT_DIR}/data/p2f_or_s2f_cxr_catalog_labeled.csv" \
+  --anchor_csv "${PROJECT_DIR}/data/p2f_or_s2f_vent_fio2_valid_rows.csv" \
+  --history_csv "${PROJECT_DIR}/data/p2f_or_s2f_vent_fio2_valid_rows.csv" \
+  --schema_csv "${PROJECT_DIR}/supertable_columns_completed.csv" \
+  --enriched_csv "${PROJECT_DIR}/data/p2f_vent_fio2_enriched.csv" \
   --output_dir "${OUTPUT_DIR}" \
-  --vit_path "${VIT_PATH}" \
   "$@"
 
 echo "=== Done ==="

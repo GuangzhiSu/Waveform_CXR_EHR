@@ -1,4 +1,4 @@
-"""End-to-end train: EHRMLPEncoder + causal transformer + dual s2f/p2f change heads."""
+"""Train EHREncoderTransformerEmbedPred: s2f + p2f cls + anchor-embed prediction (target sync per step)."""
 from __future__ import annotations
 
 import argparse
@@ -21,8 +21,8 @@ sys.path.insert(0, str(_EXP))
 
 from classification_utils import make_subset, stratified_train_val_test_indices  # noqa: E402
 from config import *  # noqa: F401,F403,E402
-from ehr_nextstep_dataset import EHRNextStepDataset  # noqa: E402
-from model import EHREncoderTransformer  # noqa: E402
+from anchor_embed_dataset import EHRAnchorEmbedDataset  # noqa: E402
+from model import EHREncoderTransformerEmbedPred  # noqa: E402
 
 
 def masked_ce(
@@ -45,7 +45,7 @@ def _inverse_freq_weights(counts: np.ndarray, num_classes: int, device: torch.de
 
 
 def _head_class_weights(
-    ds: EHRNextStepDataset,
+    ds: EHRAnchorEmbedDataset,
     indices: np.ndarray,
     has_attr: str,
     cls_attr: str,
@@ -63,6 +63,11 @@ def _head_class_weights(
     return _inverse_freq_weights(np.asarray(labels, dtype=np.int64), num_classes, device)
 
 
+def loss_anchor_embed(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    """MSE between predicted t embedding and row_encoder(t) snapshot (target detached)."""
+    return F.mse_loss(pred, target.detach())
+
+
 def collate_anchor_batch(batch):
     lengths = [b["ehr_seq"].shape[0] for b in batch]
     max_len = max(lengths)
@@ -70,6 +75,7 @@ def collate_anchor_batch(batch):
     bsz = len(batch)
     seq = torch.zeros(bsz, max_len, feat, dtype=torch.float32)
     mask = torch.zeros(bsz, max_len, dtype=torch.bool)
+    anchor_ehr = torch.zeros(bsz, feat, dtype=torch.float32)
     anchor_s2f = torch.full((bsz,), -1, dtype=torch.long)
     anchor_p2f = torch.full((bsz,), -1, dtype=torch.long)
     anchor_has_s2f = torch.zeros(bsz, dtype=torch.bool)
@@ -78,6 +84,7 @@ def collate_anchor_batch(batch):
         t = b["ehr_seq"].shape[0]
         seq[i, :t] = b["ehr_seq"]
         mask[i, :t] = True
+        anchor_ehr[i] = b["anchor_ehr"]
         c = b["anchor_s2f_cls"]
         anchor_s2f[i] = c if c >= 0 else -1
         c2 = b["anchor_p2f_cls"]
@@ -87,6 +94,7 @@ def collate_anchor_batch(batch):
     return {
         "ehr_seq": seq,
         "ehr_mask": mask,
+        "anchor_ehr": anchor_ehr,
         "anchor_s2f": anchor_s2f,
         "anchor_p2f": anchor_p2f,
         "anchor_has_s2f": anchor_has_s2f,
@@ -94,7 +102,7 @@ def collate_anchor_batch(batch):
     }
 
 
-def _stratify_labels_from_dataset(ds: EHRNextStepDataset) -> np.ndarray:
+def _stratify_labels_from_dataset(ds: EHRAnchorEmbedDataset) -> np.ndarray:
     n = len(ds)
     y = np.zeros(n, dtype=np.int64)
     for i in range(n):
@@ -107,36 +115,27 @@ def _stratify_labels_from_dataset(ds: EHRNextStepDataset) -> np.ndarray:
     return y
 
 
-def forward_loss(
-    model: EHREncoderTransformer,
-    batch: dict,
-    *,
-    p2f_loss_weight: float = 1.0,
-    s2f_class_weight: Optional[torch.Tensor] = None,
-    p2f_class_weight: Optional[torch.Tensor] = None,
-) -> torch.Tensor:
-    total, _ = forward_loss_parts(
-        model,
-        batch,
-        p2f_loss_weight=p2f_loss_weight,
-        s2f_class_weight=s2f_class_weight,
-        p2f_class_weight=p2f_class_weight,
-    )
-    return total
+def _target_anchor_embed(model: EHREncoderTransformerEmbedPred, anchor_ehr: torch.Tensor) -> torch.Tensor:
+    """Detached row_encoder(anchor) in train mode (online target, no stale eval snapshot)."""
+    return model.encode_rows(anchor_ehr).detach()
 
 
 def forward_loss_parts(
-    model: EHREncoderTransformer,
+    model: EHREncoderTransformerEmbedPred,
     batch: dict,
+    l_embed: float,
     *,
     p2f_loss_weight: float = 1.0,
     s2f_class_weight: Optional[torch.Tensor] = None,
     p2f_class_weight: Optional[torch.Tensor] = None,
     log_s2f: Optional[torch.Tensor] = None,
     log_p2f: Optional[torch.Tensor] = None,
+    pred_embed: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, dict]:
-    if log_s2f is None or log_p2f is None:
-        log_s2f, log_p2f = model(batch["ehr_seq"], batch["ehr_mask"])
+    if log_s2f is None or log_p2f is None or pred_embed is None:
+        log_s2f, log_p2f, pred_embed = model(
+            batch["ehr_seq"], batch["ehr_mask"], return_pred_embed=True
+        )
     device = log_s2f.device
     s_tgt = batch["anchor_s2f"].to(device)
     p_tgt = batch["anchor_p2f"].to(device)
@@ -144,26 +143,45 @@ def forward_loss_parts(
     p_ok = batch["anchor_has_p2f"].to(device) & (p_tgt >= 0)
     loss_s = masked_ce(log_s2f, s_tgt, s_ok, s2f_class_weight)
     loss_p = masked_ce(log_p2f, p_tgt, p_ok, p2f_class_weight)
+
+    target_embed = _target_anchor_embed(model, batch["anchor_ehr"].to(device))
+    loss_e = loss_anchor_embed(pred_embed, target_embed)
+
     n_s = int(s_ok.sum())
     n_p = int(p_ok.sum())
-    if n_s and n_p:
-        total = (loss_s * n_s + loss_p * p2f_loss_weight * n_p) / (n_s + p2f_loss_weight * n_p)
-    elif n_s:
-        total = loss_s
-    elif n_p:
-        total = loss_p
-    else:
-        total = loss_s + loss_p
-    return total, {"loss_s2f": loss_s, "loss_p2f": loss_p, "log_s2f": log_s2f, "log_p2f": log_p2f}
+    n_e = int(pred_embed.size(0))
+    w_p = p2f_loss_weight
+    w_e = l_embed
+    num = pred_embed.new_tensor(0.0)
+    den = 0.0
+    if n_s:
+        num = num + loss_s * n_s
+        den += n_s
+    if n_p:
+        num = num + loss_p * w_p * n_p
+        den += w_p * n_p
+    num = num + loss_e * w_e * n_e
+    den += w_e * n_e
+    total = num / max(den, 1.0)
+
+    return total, {
+        "loss_s2f": loss_s,
+        "loss_p2f": loss_p,
+        "loss_embed": loss_e,
+        "log_s2f": log_s2f,
+        "log_p2f": log_p2f,
+        "pred_embed": pred_embed,
+        "target_embed": target_embed,
+    }
 
 
-def _count_params(model: EHREncoderTransformer) -> tuple:
+def _count_params(model: EHREncoderTransformerEmbedPred) -> tuple:
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     total = sum(p.numel() for p in model.parameters())
     return trainable, total
 
 
-def _grad_norm(model: EHREncoderTransformer) -> float:
+def _grad_norm(model: EHREncoderTransformerEmbedPred) -> float:
     sq = 0.0
     n = 0
     for p in model.parameters():
@@ -175,7 +193,7 @@ def _grad_norm(model: EHREncoderTransformer) -> float:
     return (sq ** 0.5) if n else 0.0
 
 
-def _param_l2(model: EHREncoderTransformer) -> float:
+def _param_l2(model: EHREncoderTransformerEmbedPred) -> float:
     sq = 0.0
     for p in model.parameters():
         if p.requires_grad:
@@ -183,11 +201,11 @@ def _param_l2(model: EHREncoderTransformer) -> float:
     return sq ** 0.5
 
 
-def _snapshot_trainable(model: EHREncoderTransformer) -> dict:
+def _snapshot_trainable(model: EHREncoderTransformerEmbedPred) -> dict:
     return {n: p.detach().clone() for n, p in model.named_parameters() if p.requires_grad}
 
 
-def _param_delta_l2(model: EHREncoderTransformer, before: dict) -> float:
+def _param_delta_l2(model: EHREncoderTransformerEmbedPred, before: dict) -> float:
     sq = 0.0
     for n, p in model.named_parameters():
         if not p.requires_grad or n not in before:
@@ -197,7 +215,7 @@ def _param_delta_l2(model: EHREncoderTransformer, before: dict) -> float:
     return sq ** 0.5
 
 
-def _print_module_trainable(model: EHREncoderTransformer) -> None:
+def _print_module_trainable(model: EHREncoderTransformerEmbedPred) -> None:
     print("  Trainable modules (params with requires_grad=True):")
     for name, mod in model.named_children():
         n = sum(p.numel() for p in mod.parameters() if p.requires_grad)
@@ -205,8 +223,7 @@ def _print_module_trainable(model: EHREncoderTransformer) -> None:
         print(f"    {name}: trainable={n:,} / total={t:,}")
 
 
-def _anchor_label_stats(ds: EHRNextStepDataset, indices: np.ndarray, split_name: str) -> None:
-    """Label counts + majority-class accuracy baseline on a split."""
+def _anchor_label_stats(ds: EHRAnchorEmbedDataset, indices: np.ndarray, split_name: str) -> None:
     n_cls = 3
     s_cnt = np.zeros(n_cls, dtype=np.int64)
     p_cnt = np.zeros(n_cls, dtype=np.int64)
@@ -231,18 +248,16 @@ def _hist_str(counts: np.ndarray) -> str:
 
 
 def _change_class_names(num_classes: int) -> list:
-    """Labels for severity_change_12to24h (0/1/2 in CSV)."""
     return [f"change_{i}" for i in range(num_classes)]
 
 
 @torch.no_grad()
 def _collect_head_preds(
-    model: EHREncoderTransformer,
+    model: EHREncoderTransformerEmbedPred,
     loader: DataLoader,
     device: torch.device,
     head: str,
 ) -> tuple:
-    """Return (y_true, y_pred) for anchor s2f or p2f on a split."""
     labels: list = []
     preds: list = []
     for batch in loader:
@@ -302,13 +317,22 @@ def _print_head_classification(
     elif acc >= maj_acc - 0.002 and acc <= maj_acc + 0.002:
         print("  NOTE: accuracy ≈ majority baseline — model may be mostly guessing the majority class")
     print("  Classification report:")
-    print(classification_report(y_true, y_pred, target_names=names, digits=4, zero_division=0))
+    print(
+        classification_report(
+            y_true, y_pred, target_names=names, labels=list(range(num_classes)), digits=4, zero_division=0
+        )
+    )
     cm = confusion_matrix(y_true, y_pred, labels=list(range(num_classes)))
     print("  Confusion matrix (rows=true, cols=pred):")
     print(cm)
 
     report = classification_report(
-        y_true, y_pred, target_names=names, output_dict=True, zero_division=0
+        y_true,
+        y_pred,
+        target_names=names,
+        labels=list(range(num_classes)),
+        output_dict=True,
+        zero_division=0,
     )
     return {
         "n": n,
@@ -324,7 +348,7 @@ def _print_head_classification(
 
 
 def evaluate_split_both_heads(
-    model: EHREncoderTransformer,
+    model: EHREncoderTransformerEmbedPred,
     loader: DataLoader,
     device: torch.device,
     split_name: str,
@@ -343,6 +367,7 @@ def eval_loader(
     model,
     loader,
     device,
+    l_embed: float,
     collect_pred_hist: bool = False,
     *,
     p2f_loss_weight: float = 1.0,
@@ -353,23 +378,30 @@ def eval_loader(
     tot = 0.0
     n_batches = 0
     acc_s_n = acc_s_d = acc_p_n = acc_p_d = 0.0
-    ce_s_sum = ce_p_sum = 0.0
+    ce_s_sum = ce_p_sum = embed_sum = 0.0
     n_ce_s = n_ce_p = 0
     pred_s = np.zeros(3, dtype=np.int64)
     pred_p = np.zeros(3, dtype=np.int64)
     for batch in loader:
         b = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
-        log_s2f, log_p2f = model(b["ehr_seq"], b["ehr_mask"])
-        loss, _ = forward_loss_parts(
+        log_s2f, log_p2f, pred_embed = model(b["ehr_seq"], b["ehr_mask"], return_pred_embed=True)
+        loss, parts = forward_loss_parts(
             model,
             b,
+            l_embed,
             p2f_loss_weight=p2f_loss_weight,
             s2f_class_weight=s2f_class_weight,
             p2f_class_weight=p2f_class_weight,
             log_s2f=log_s2f,
             log_p2f=log_p2f,
+            pred_embed=pred_embed,
         )
+        if not torch.isfinite(loss):
+            continue
         tot += float(loss)
+        loss_e = parts["loss_embed"]
+        embed_sum += float(loss_e)
+        embed_sum += float(loss_e)
         n_batches += 1
         s_ok = b["anchor_has_s2f"] & (b["anchor_s2f"] >= 0)
         p_ok = b["anchor_has_p2f"] & (b["anchor_p2f"] >= 0)
@@ -395,6 +427,7 @@ def eval_loader(
         "loss": tot / max(n_batches, 1),
         "ce_s2f": ce_s_sum / max(n_ce_s, 1),
         "ce_p2f": ce_p_sum / max(n_ce_p, 1),
+        "loss_embed": embed_sum / max(n_batches, 1),
         "acc_s2f": acc_s_n / max(acc_s_d, 1),
         "acc_p2f": acc_p_n / max(acc_p_d, 1),
     }
@@ -415,7 +448,7 @@ def main(args):
             "WARNING: CUDA not available; training on CPU. "
             "For Slurm, use partition gpu-common (-p gpu-common) and request a GPU (-G 1)."
         )
-    print(f"EHREncoderTransformer  device={device}")
+    print(f"EHREncoderTransformerEmbedPred  device={device}  l_embed={args.l_embed}")
     if device.type == "cuda":
         print(f"  GPU: {torch.cuda.get_device_name(0)}")
 
@@ -424,7 +457,7 @@ def main(args):
         print(f"  No enriched join (missing file): {enr!r}")
         enr = None
 
-    full_ds = EHRNextStepDataset(
+    full_ds = EHRAnchorEmbedDataset(
         anchor_source_csv=args.anchor_csv,
         history_csv=args.history_csv,
         schema_csv=args.schema_csv,
@@ -434,8 +467,9 @@ def main(args):
         include_anchor_row=args.include_anchor_row,
     )
     print(
-        f"  Loss: p2f_weight={args.p2f_loss_weight}  class_weights={args.use_class_weights}  "
-        f"include_anchor_row={args.include_anchor_row}"
+        f"  Loss: l_embed={args.l_embed}  p2f_weight={args.p2f_loss_weight}  "
+        f"class_weights={args.use_class_weights}  grad_clip={args.grad_clip_norm}  "
+        f"include_anchor_row={args.include_anchor_row}  embed_target=row_encoder_detach"
     )
     n_all = len(full_ds)
     if args.max_samples and args.max_samples < n_all:
@@ -482,7 +516,7 @@ def main(args):
         collate_fn=collate_anchor_batch,
     )
 
-    model = EHREncoderTransformer(
+    model = EHREncoderTransformerEmbedPred(
         input_dim=input_dim,
         embed_dim=args.embed_dim,
         d_model=args.d_model,
@@ -532,15 +566,39 @@ def main(args):
     for epoch in range(args.epochs):
         model.train()
         tr = 0.0
-        tr_s = tr_p = 0.0
+        tr_s = tr_p = tr_e = 0.0
         n_tr_batches = 0
+        n_finite_batches = 0
+        n_skipped_nonfinite = 0
+        n_skipped_bad_grad = 0
         last_grad_norm = 0.0
         for batch_idx, batch in enumerate(train_loader):
             b = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
-            loss, parts = forward_loss_parts(model, b, **loss_kw)
+            loss, parts = forward_loss_parts(model, b, args.l_embed, **loss_kw)
+            if not torch.isfinite(loss):
+                n_skipped_nonfinite += 1
+                if n_skipped_nonfinite <= 3:
+                    pe = parts["pred_embed"]
+                    te = parts["target_embed"]
+                    print(
+                        f"  WARNING: non-finite loss at epoch {epoch + 1} batch {batch_idx} "
+                        f"(|pred_embed|_max={float(pe.abs().max()):.4g} "
+                        f"|target_embed|_max={float(te.abs().max()):.4g}) — skip step"
+                    )
+                opt.zero_grad(set_to_none=True)
+                continue
             opt.zero_grad()
             loss.backward()
-            last_grad_norm = _grad_norm(model)
+            if args.grad_clip_norm > 0:
+                last_grad_norm = float(
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip_norm)
+                )
+            else:
+                last_grad_norm = _grad_norm(model)
+            if not np.isfinite(last_grad_norm):
+                n_skipped_bad_grad += 1
+                opt.zero_grad(set_to_none=True)
+                continue
             if epoch == 0 and batch_idx == 0:
                 w_before_step = _snapshot_trainable(model)
             opt.step()
@@ -549,11 +607,14 @@ def main(args):
                 lens = b["ehr_mask"].long().sum(dim=1)
                 s_ok = b["anchor_has_s2f"] & (b["anchor_s2f"] >= 0)
                 p_ok = b["anchor_has_p2f"] & (b["anchor_p2f"] >= 0)
+                pe = parts["pred_embed"]
+                te = parts["target_embed"]
                 print(
                     "  [train check epoch1 batch0] "
                     f"loss={float(loss):.4f}  loss_s2f={float(parts['loss_s2f']):.4f}  "
-                    f"loss_p2f={float(parts['loss_p2f']):.4f}  grad_norm={last_grad_norm:.6f}  "
-                    f"param_delta_after_1step={step_delta:.8f}"
+                    f"loss_p2f={float(parts['loss_p2f']):.4f}  loss_embed={float(parts['loss_embed']):.4f}  "
+                    f"|pred_embed|_max={float(pe.abs().max()):.4f}  |target_embed|_max={float(te.abs().max()):.4f}  "
+                    f"grad_norm={last_grad_norm:.6f}  param_delta_after_1step={step_delta:.8f}"
                 )
                 print(
                     f"    batch: seq_len min/median/max="
@@ -569,16 +630,25 @@ def main(args):
             tr += float(loss)
             tr_s += float(parts["loss_s2f"])
             tr_p += float(parts["loss_p2f"])
+            tr_e += float(parts["loss_embed"])
             n_tr_batches += 1
-        tr /= max(n_tr_batches, 1)
-        tr_s /= max(n_tr_batches, 1)
-        tr_p /= max(n_tr_batches, 1)
+            n_finite_batches += 1
+        tr /= max(n_finite_batches, 1)
+        tr_s /= max(n_finite_batches, 1)
+        tr_p /= max(n_finite_batches, 1)
+        tr_e /= max(n_finite_batches, 1)
         epoch_param_delta = _param_delta_l2(model, param_snap_start) if epoch == 0 else None
-        st = eval_loader(model, val_loader, device, collect_pred_hist=True, **loss_kw)
+        st = eval_loader(
+            model, val_loader, device, args.l_embed, collect_pred_hist=True, **loss_kw
+        )
         print(
             f"Epoch {epoch + 1}/{args.epochs}  train_loss={tr:.4f}  "
-            f"(s2f={tr_s:.4f} p2f={tr_p:.4f})  val_loss={st['loss']:.4f}  "
-            f"val_acc_s2f={st['acc_s2f']:.6f}  val_acc_p2f={st['acc_p2f']:.6f}"
+            f"(s2f={tr_s:.4f} p2f={tr_p:.4f} embed={tr_e:.4f})  "
+            f"finite_batches={n_finite_batches}  skipped_nonfinite={n_skipped_nonfinite}  "
+            f"skipped_bad_grad={n_skipped_bad_grad}  "
+            f"val_loss={st['loss']:.4f}  "
+            f"val_acc_s2f={st['acc_s2f']:.6f}  val_acc_p2f={st['acc_p2f']:.6f}  "
+            f"val_embed={st['loss_embed']:.6f}"
         )
         print(
             f"  val pred_s2f: {_hist_str(st['pred_hist_s2f'])}  "
@@ -599,7 +669,13 @@ def main(args):
             best_epoch = epoch
             epochs_no_improve = 0
             torch.save(
-                {"model": model.state_dict(), "epoch": epoch, "val_loss": best_val, "input_dim": input_dim},
+                {
+                    "model": model.state_dict(),
+                    "epoch": epoch,
+                    "val_loss": best_val,
+                    "input_dim": input_dim,
+                    "l_embed": args.l_embed,
+                },
                 out_dir / "best.pt",
             )
         else:
@@ -617,10 +693,11 @@ def main(args):
     if (out_dir / "best.pt").is_file():
         ck = torch.load(out_dir / "best.pt", map_location=device, weights_only=False)
         model.load_state_dict(ck["model"])
-    test_st = eval_loader(model, test_loader, device, **loss_kw)
+    test_st = eval_loader(model, test_loader, device, args.l_embed, **loss_kw)
     print(
         f"\nTest (summary): loss={test_st['loss']:.4f}  "
-        f"acc_s2f={test_st['acc_s2f']:.4f}  acc_p2f={test_st['acc_p2f']:.4f}"
+        f"acc_s2f={test_st['acc_s2f']:.4f}  acc_p2f={test_st['acc_p2f']:.4f}  "
+        f"embed={test_st['loss_embed']:.4f}"
     )
     print(f"  (best checkpoint epoch {best_epoch + 1 if best_epoch >= 0 else 'n/a'})")
 
@@ -632,12 +709,15 @@ def main(args):
     )
 
     results = {
-        "task": "ehrencoder_transformer_anchor_s2f_p2f",
+        "task": "ehrencoder_transformer_embed_pred_s2f_p2f",
         "lookback_hours": [args.lookback_max_hours, args.lookback_min_hours],
         "include_anchor_row": args.include_anchor_row,
+        "anchor_pool": args.anchor_pool,
+        "l_embed": args.l_embed,
         "p2f_loss_weight": args.p2f_loss_weight,
         "use_class_weights": args.use_class_weights,
-        "anchor_pool": args.anchor_pool,
+        "grad_clip_norm": args.grad_clip_norm,
+        "embed_target": "row_encoder_detach",
         "best_val_loss": best_val,
         "best_epoch": best_epoch + 1 if best_epoch >= 0 else None,
         "stopped_early": stopped_early,
@@ -671,6 +751,7 @@ if __name__ == "__main__":
     p.add_argument("--head_dropout", type=float, default=HEAD_DROPOUT)
     p.add_argument("--max_seq_length", type=int, default=MAX_SEQ_LENGTH)
     p.add_argument("--anchor_pool", type=str, default=ANCHOR_POOL, choices=["last", "mean"])
+    p.add_argument("--l_embed", type=float, default=L_EMBED)
     p.add_argument("--batch_size", type=int, default=BATCH_SIZE)
     p.add_argument("--epochs", type=int, default=EPOCHS)
     p.add_argument("--lr", type=float, default=LR)
@@ -686,6 +767,7 @@ if __name__ == "__main__":
     p.add_argument("--include_anchor_row", action=argparse.BooleanOptionalAction, default=INCLUDE_ANCHOR_ROW)
     p.add_argument("--p2f_loss_weight", type=float, default=P2F_LOSS_WEIGHT)
     p.add_argument("--use_class_weights", action=argparse.BooleanOptionalAction, default=USE_CLASS_WEIGHTS)
+    p.add_argument("--grad_clip_norm", type=float, default=GRAD_CLIP_NORM)
     a = p.parse_args()
     if not a.max_samples:
         a.max_samples = 0

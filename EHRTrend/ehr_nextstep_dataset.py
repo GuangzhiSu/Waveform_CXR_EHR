@@ -54,7 +54,9 @@ class EHRNextStepDataset(Dataset):
         enriched_csv: Optional[str] = None,
         lookback_min_hours: int = 12,
         lookback_max_hours: int = 24,
+        include_anchor_row: bool = True,
     ):
+        self.include_anchor_row = include_anchor_row
         main = pd.read_csv(anchor_source_csv, low_memory=False)
         self.history_df = pd.read_csv(history_csv, low_memory=False)
         schema = pd.read_csv(schema_csv)
@@ -199,9 +201,12 @@ class EHRNextStepDataset(Dataset):
         seq_lens = np.array(
             [self._window_indices(i).size for i in range(len(self.anchor_df))], dtype=np.int32
         )
+        lb = f"[t-{lookback_max_hours}h, t-{lookback_min_hours}h]"
+        if include_anchor_row:
+            lb += " + anchor@t"
         print(
             f"  EHR next-step dataset: n={len(self.anchor_df):,}, features={self.input_dim}, "
-            f"lookback=[t-{lookback_max_hours}h, t-{lookback_min_hours}h]"
+            f"lookback={lb}"
         )
         print(
             f"  Sequence length stats: min={seq_lens.min()}, median={int(np.median(seq_lens))}, max={seq_lens.max()}"
@@ -291,6 +296,12 @@ class EHRNextStepDataset(Dataset):
         p2f_step = self.hist_p2f_cls[win]
         s2f_ok = self.hist_has_s2f[win] & (s2f_step >= 0)
         p2f_ok = self.hist_has_p2f[win] & (p2f_step >= 0)
+        if self.include_anchor_row:
+            seq = np.concatenate([seq, self.anchor_pct[idx : idx + 1]], axis=0)
+            s2f_step = np.concatenate([s2f_step, np.array([self.anchor_s2f_cls[idx]], dtype=np.int64)])
+            p2f_step = np.concatenate([p2f_step, np.array([self.anchor_p2f_cls[idx]], dtype=np.int64)])
+            s2f_ok = np.concatenate([s2f_ok, np.array([self.anchor_has_s2f[idx] and self.anchor_s2f_cls[idx] >= 0])])
+            p2f_ok = np.concatenate([p2f_ok, np.array([self.anchor_has_p2f[idx] and self.anchor_p2f_cls[idx] >= 0])])
 
         return {
             "ehr_seq": torch.from_numpy(seq).float(),

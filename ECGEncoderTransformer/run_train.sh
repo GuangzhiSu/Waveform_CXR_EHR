@@ -29,7 +29,33 @@ OUTPUT_DIR="${SCRIPT_DIR}/output"
 mkdir -p "${PROJECT_DIR}/logs"
 cd "${PROJECT_DIR}" || exit 1
 
-export PYTHONPATH="${PROJECT_DIR}:${SCRIPT_DIR}:${PROJECT_DIR}/EHRWindowTransformer:${PROJECT_DIR}/EHRTrend:${PROJECT_DIR}/BaselineExperiment:${PROJECT_DIR}/experiment1(old)"
+export PYTHONPATH="${SCRIPT_DIR}:${PROJECT_DIR}/CXREncoderTransformer:${PROJECT_DIR}:${PROJECT_DIR}/EHRWindowTransformer:${PROJECT_DIR}/BaselineExperiment:${PROJECT_DIR}/EHRTrend:${PROJECT_DIR}/experiment1(old)"
+
+MEDTVT_ROOT="$(cd "${PROJECT_DIR}/MedTVT-R1" 2>/dev/null && pwd || cd "${PROJECT_DIR}/../MedTVT-R1" 2>/dev/null && pwd || true)"
+ECG_CKPT=""
+if [[ -n "${MEDTVT_ROOT}" ]]; then
+  if [[ -f "${MEDTVT_ROOT}/CKPTS/best_valid_all_increase_with_augment_epoch_3.pt" ]]; then
+    ECG_CKPT="${MEDTVT_ROOT}/CKPTS/best_valid_all_increase_with_augment_epoch_3.pt"
+  else
+    shopt -s nullglob
+    _pl_ckpts=("${MEDTVT_ROOT}/CKPTS/"*.ckpt)
+    shopt -u nullglob
+    if [[ ${#_pl_ckpts[@]} -gt 0 ]]; then
+      ECG_CKPT="${_pl_ckpts[0]}"
+      for _f in "${_pl_ckpts[@]}"; do
+        [[ "${_f}" -nt "${ECG_CKPT}" ]] && ECG_CKPT="${_f}"
+      done
+    fi
+  fi
+fi
+if [[ -n "${ECG_CKPT}" ]]; then
+  export ECG_CKPT
+  ECG_CKPT_ARG=(--ecg_ckpt "${ECG_CKPT}")
+  echo "Using ECG checkpoint: ${ECG_CKPT}"
+else
+  ECG_CKPT_ARG=()
+  echo "WARNING: no ECG ckpt under ${MEDTVT_ROOT:-<unset>}/CKPTS/ (.pt or .ckpt) — random-init frozen encoder"
+fi
 
 [[ -n "$(command -v conda)" ]] && {
   eval "$(conda shell.bash hook 2>/dev/null)" || true
@@ -48,6 +74,7 @@ fi
 python -u "${TRAIN_SCRIPT}" \
   --ecg_labeled_csv "${PROJECT_DIR}/data/p2f_or_s2f_ecg_catalog_labeled.csv" \
   --output_dir "${OUTPUT_DIR}" \
+  "${ECG_CKPT_ARG[@]}" \
   "$@"
 
 echo "=== Done ==="

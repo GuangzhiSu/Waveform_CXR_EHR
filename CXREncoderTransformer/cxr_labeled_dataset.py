@@ -213,7 +213,8 @@ class CXRLabeledCatalogDataset(Dataset):
         path = get_cxr_path(_norm_dicom_id(dicom_id), int(subject_id), study_id, self.cxr_root)
         return bool(path and os.path.isfile(path))
 
-    def _load_cxr(self, row: pd.Series) -> Tuple[torch.Tensor, bool]:
+    def _load_cxr(self, row: pd.Series, cxr_split: Optional[str] = None) -> Tuple[torch.Tensor, bool]:
+        split = cxr_split if cxr_split is not None else self.cxr_split
         dicom_id = row.get("dicom_id")
         subject_id = row.get("subject_id")
         study_id = _first_non_empty_study_id(row)
@@ -221,17 +222,15 @@ class CXRLabeledCatalogDataset(Dataset):
             dicom_id = _norm_dicom_id(dicom_id)
             path = get_cxr_path(dicom_id, int(subject_id), study_id, self.cxr_root)
             if path and os.path.isfile(path):
-                return load_cxr(path, self.cxr_split, imagenet_normalize=self.imagenet_normalize), True
+                return load_cxr(path, split, imagenet_normalize=self.imagenet_normalize), True
         return torch.zeros(3, 224, 224), False
 
-    def __len__(self) -> int:
-        return len(self.groups)
-
-    def __getitem__(self, idx: int):
+    def get_anchor_item(self, idx: int, cxr_split: Optional[str] = None):
+        """Load one anchor sample; optional cxr_split overrides instance default."""
         grp = self.groups[idx]
         cxrs, m_cxr = [], []
         for _, row in grp.iterrows():
-            img, ok = self._load_cxr(row)
+            img, ok = self._load_cxr(row, cxr_split=cxr_split)
             cxrs.append(img)
             m_cxr.append(ok)
         if not cxrs:
@@ -245,3 +244,29 @@ class CXRLabeledCatalogDataset(Dataset):
             "anchor_has_s2f": bool(self.anchor_has_s2f[idx]),
             "anchor_has_p2f": bool(self.anchor_has_p2f[idx]),
         }
+
+    def __len__(self) -> int:
+        return len(self.groups)
+
+    def __getitem__(self, idx: int):
+        return self.get_anchor_item(idx)
+
+
+class CXRLabeledCatalogView(Dataset):
+    """Index view into CXRLabeledCatalogDataset with a fixed train/val/test crop split."""
+
+    def __init__(
+        self,
+        base: CXRLabeledCatalogDataset,
+        indices: np.ndarray,
+        cxr_split: str,
+    ):
+        self.base = base
+        self.indices = np.asarray(indices, dtype=np.int64)
+        self.cxr_split = cxr_split
+
+    def __len__(self) -> int:
+        return len(self.indices)
+
+    def __getitem__(self, i: int):
+        return self.base.get_anchor_item(int(self.indices[i]), cxr_split=self.cxr_split)

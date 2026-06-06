@@ -1,33 +1,9 @@
-"""Vendored from cxrgen `transformernn.py`: position encoding + encoder block with split attn / padding masks for causal models."""
+"""Vendored from cxrgen `transformernn.py`: position encoding + encoder block with split attn / padding masks for causal EHR models."""
 import math
 from typing import Optional
 
 import torch
 import torch.nn as nn
-
-
-def build_combined_attn_mask(
-    key_padding_mask: torch.Tensor,
-    causal: bool = True,
-) -> torch.Tensor:
-    """
-    Merge causal and padding into one float additive mask for MultiheadAttention.
-
-    key_padding_mask: (B, T) with True = ignore key position.
-    Returns (B, T, T) float mask (0 = attend, -inf = block).
-    """
-    bsz, t = key_padding_mask.shape
-    device = key_padding_mask.device
-    mask = torch.zeros(bsz, t, t, device=device, dtype=torch.float32)
-    if causal and t > 0:
-        causal_block = torch.triu(
-            torch.ones(t, t, device=device, dtype=torch.bool),
-            diagonal=1,
-        )
-        mask = mask.masked_fill(causal_block.unsqueeze(0), float("-inf"))
-    pad_keys = key_padding_mask.unsqueeze(1).expand(-1, t, -1)
-    mask = mask.masked_fill(pad_keys, float("-inf"))
-    return mask
 
 
 class PositionalEmbedding(nn.Module):
@@ -77,26 +53,14 @@ class EncoderBlock(nn.Module):
         attn_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         x_norm = self.norm1(x)
-        if attn_mask is not None and attn_mask.dim() == 3:
-            nh = self.attention.num_heads
-            b, t, _ = attn_mask.shape
-            head_mask = attn_mask.unsqueeze(1).expand(b, nh, t, t).reshape(b * nh, t, t)
-            attn_out, _ = self.attention(
-                x_norm,
-                x_norm,
-                x_norm,
-                attn_mask=head_mask,
-                need_weights=False,
-            )
-        else:
-            attn_out, _ = self.attention(
-                x_norm,
-                x_norm,
-                x_norm,
-                key_padding_mask=key_padding_mask,
-                attn_mask=attn_mask,
-                need_weights=False,
-            )
+        attn_out, _ = self.attention(
+            x_norm,
+            x_norm,
+            x_norm,
+            key_padding_mask=key_padding_mask,
+            attn_mask=attn_mask,
+            need_weights=False,
+        )
         x = x + self.dropout(attn_out)
         x_norm = self.norm2(x)
         x = x + self.dropout(self.mlp(x_norm))

@@ -1,4 +1,4 @@
-"""Config for EHREncoderTransformer: MLP row encoder + causal transformer + dual cls heads."""
+"""Config for EHREncoderTransformerEmbedPred: EHREncoderTransformer + anchor-embed prediction loss."""
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -21,6 +21,9 @@ HEAD_DROPOUT = 0.2
 ANCHOR_POOL = "last"
 MAX_SEQ_LENGTH = 512
 
+# Third loss: predict t embedding from [t-24h, t-12h] window vs row_encoder(t) snapshot.
+L_EMBED = 0.25
+
 BATCH_SIZE = 64
 EPOCHS = 50
 LR = 5e-4
@@ -35,8 +38,7 @@ EARLY_STOP_PATIENCE = 10
 EARLY_STOP_MIN_DELTA = 1e-4
 OUTPUT_DIR = str(EXP_DIR / "output")
 
-# Dataset: append anchor-time EHR row so pooling sees state at t (not only t-12h).
 INCLUDE_ANCHOR_ROW = True
-# Up-weight p2f CE vs s2f (train ~10:1 s2f:p2f anchors per batch).
 P2F_LOSS_WEIGHT = 10.0
 USE_CLASS_WEIGHTS = True
+GRAD_CLIP_NORM = 1.0

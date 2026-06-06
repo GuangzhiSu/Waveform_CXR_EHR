@@ -23,6 +23,98 @@ ensure_medtvt_on_syspath()
 
 from llama.xresnet1d_101 import xresnet1d101  # noqa: E402
 
+try:
+    from torchvision import models as tv_models
+except ImportError:  # pragma: no cover
+    tv_models = None
+
+
+def _strip_prefix(state_dict: dict, prefix: str) -> dict:
+    if not any(k.startswith(prefix) for k in state_dict):
+        return state_dict
+    return {k[len(prefix) :]: v for k, v in state_dict.items() if k.startswith(prefix)}
+
+
+def extract_ecg_encoder_state_dict(ckpt_path: str) -> tuple[dict, str]:
+    """
+    Return (state_dict, kind) for ECG backbone weights.
+
+    kind is ``symile`` (ResNet18 2D, 1024-d) or ``xresnet`` (xresnet1d101).
+    """
+    raw = torch.load(ckpt_path, map_location="cpu")
+    if isinstance(raw, dict) and "state_dict" in raw:
+        sd = raw["state_dict"]
+        symile = _strip_prefix(sd, "ecg_encoder.")
+        if symile and any(k.startswith("resnet.") for k in symile):
+            return symile, "symile"
+    if isinstance(raw, dict) and "ecg_model" in raw:
+        return raw["ecg_model"], "xresnet"
+    if isinstance(raw, dict):
+        if any(str(k).startswith("ecg_encoder.") for k in raw):
+            symile = _strip_prefix(raw, "ecg_encoder.")
+            return symile, "symile"
+        if any(str(k).startswith("0.") for k in raw) or any("resnet" not in str(k) for k in list(raw)[:5]):
+            return raw.get("ecg_model", raw), "xresnet"
+    return raw, "xresnet"
+
+
+class SymileECGEncoder(nn.Module):
+    """
+    Symile MIMIC ECGEncoder: ResNet18 on (1, T, 12) spectrogram-style layout -> 1024-d.
+
+    Matches ``symile.experiments.models.symile_mimic_model.ECGEncoder`` weights in
+    PyTorch-Lightning checkpoints (``ecg_encoder.resnet.*``).
+    """
+
+    def __init__(
+        self,
+        hidden_dim: int = 1024,
+        target_time: int = 5000,
+        pretrained_resnet: bool = False,
+        freeze: bool = True,
+        ckpt_path: str | None = None,
+    ):
+        super().__init__()
+        if tv_models is None:
+            raise ImportError("torchvision is required for SymileECGEncoder")
+        self.hidden_dim = hidden_dim
+        self.target_time = int(target_time)
+        if pretrained_resnet:
+            self.resnet = tv_models.resnet18(weights=tv_models.ResNet18_Weights.IMAGENET1K_V1)
+        else:
+            self.resnet = tv_models.resnet18(weights=None)
+        self.resnet.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
+        self.resnet.fc = nn.Linear(self.resnet.fc.in_features, hidden_dim, bias=True)
+        self.layer_norm = nn.LayerNorm(hidden_dim)
+        if ckpt_path and os.path.exists(ckpt_path):
+            sd, kind = extract_ecg_encoder_state_dict(ckpt_path)
+            if kind != "symile":
+                raise ValueError(f"Checkpoint {ckpt_path} is not a Symile ecg_encoder weights file (kind={kind})")
+            missing, unexpected = self.load_state_dict(sd, strict=False)
+            if unexpected:
+                raise RuntimeError(f"Unexpected keys loading Symile ECG ckpt: {unexpected[:8]}")
+            if missing:
+                print(f"  WARNING: Symile ECG ckpt missing keys: {missing[:8]} ... ({len(missing)} total)")
+        if freeze:
+            for p in self.parameters():
+                p.requires_grad = False
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """x: (B, 12, L) WFDB leads x time -> (B, hidden_dim)."""
+        if x.dim() != 3:
+            raise ValueError(f"Expected (B, 12, L), got {tuple(x.shape)}")
+        b, leads, length = x.shape
+        if leads != 12:
+            raise ValueError(f"Expected 12 leads, got {leads}")
+        # (B, 12, L) -> (B, 1, L, 12) -> resize time to target_time
+        img = x.permute(0, 2, 1).unsqueeze(1)
+        if length != self.target_time:
+            img = nn.functional.interpolate(
+                img, size=(self.target_time, 12), mode="bilinear", align_corners=False
+            )
+        feats = self.resnet(img)
+        return self.layer_norm(feats)
+
 
 class SignalEncoder(nn.Module):
     """xresnet1d101-based ECG encoder (12-lead waveform -> hidden embedding)."""
@@ -45,8 +137,12 @@ class SignalEncoder(nn.Module):
             use_ecgNet_Diagnosis="other",
         )
         if ckpt_path and os.path.exists(ckpt_path):
-            ecg_ckpt = torch.load(ckpt_path, map_location="cpu")
-            sd = ecg_ckpt.get("ecg_model", ecg_ckpt)
+            sd, kind = extract_ecg_encoder_state_dict(ckpt_path)
+            if kind != "xresnet":
+                raise ValueError(
+                    f"Checkpoint {ckpt_path} is Symile ResNet18 (kind={kind}); "
+                    "use SymileECGEncoder / build_ecg_encoder_from_ckpt instead of SignalEncoder."
+                )
             self.encoder.load_state_dict(sd, strict=False)
         if freeze:
             for p in self.encoder.parameters():
@@ -158,8 +254,40 @@ class ECGTransformerEncoder(nn.Module):
         return x                          # [B, T, D]
 
 
+def build_ecg_encoder_from_ckpt(
+    ckpt_path: str | None,
+    hidden_dim: int = 512,
+    sig_len: int = 1000,
+    freeze: bool = True,
+    input_channels: int = 12,
+) -> tuple[nn.Module, str]:
+    """Instantiate frozen ECG backbone; auto-detect Symile PL ckpt vs MedTVT xresnet."""
+    if ckpt_path and os.path.exists(ckpt_path):
+        _, kind = extract_ecg_encoder_state_dict(ckpt_path)
+        if kind == "symile":
+            dim = 1024 if hidden_dim < 1024 else hidden_dim
+            enc = SymileECGEncoder(
+                hidden_dim=dim,
+                target_time=sig_len,
+                pretrained_resnet=False,
+                freeze=freeze,
+                ckpt_path=ckpt_path,
+            )
+            return enc, "symile"
+    enc = SignalEncoder(
+        ckpt_path=ckpt_path,
+        input_channels=input_channels,
+        sig_len=sig_len,
+        hidden_dim=hidden_dim,
+        freeze=freeze,
+    )
+    return enc, "xresnet"
+
+
 def build_ecg_encoder(kind: str, hidden_dim: int = 512, **kwargs) -> nn.Module:
     kind = kind.lower()
+    if kind in {"symile", "symile_resnet18"}:
+        return SymileECGEncoder(hidden_dim=max(hidden_dim, 1024), **kwargs)
     if kind in {"cnn", "xresnet", "signal"}:
         return SignalEncoder(hidden_dim=hidden_dim, **kwargs)
     if kind == "transformer":

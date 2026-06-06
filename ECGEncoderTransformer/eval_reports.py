@@ -19,6 +19,8 @@ def collect_head_preds_ecg(model, loader: DataLoader, device: torch.device, head
     labels: list = []
     preds: list = []
     for batch in loader:
+        if batch is None:
+            continue
         b = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
         log_s, log_p = model(b["ecg_seq"], b["ecg_mask"])
         if head == "s2f":

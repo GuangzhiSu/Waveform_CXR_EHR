@@ -17,6 +17,20 @@ if _BE.is_dir() and str(_BE) not in sys.path:
 
 from ECGUni.dataset import load_ecg, normalize_ecg_per_lead  # noqa: E402
 
+_ECG_LOAD_EPS = 1e-8
+
+
+def _wfdb_record_on_disk(path: str) -> bool:
+    """WFDB records use ``record.hea`` + ``record.dat``; bare path is often not a regular file."""
+    p = path.strip()
+    if not p:
+        return False
+    return os.path.exists(p) or os.path.exists(p + ".hea")
+
+
+def _ecg_loaded_ok(ecg: torch.Tensor) -> bool:
+    return bool(ecg.numel() > 0 and float(ecg.abs().mean()) > _ECG_LOAD_EPS)
+
 
 def _to_has_flag(v) -> bool:
     if isinstance(v, (bool, np.bool_)):
@@ -56,11 +70,14 @@ class ECGLabeledCatalogDataset(Dataset):
         lookback_min_hours: float = 12.0,
         lookback_max_hours: float = 24.0,
         require_hours_in_window: bool = True,
+        drop_invalid_anchors: bool = True,
     ):
         self.ecg_target_len = int(ecg_target_len)
         self.normalize_ecg_per_lead_flag = normalize_ecg_per_lead_flag
         self.lookback_min_hours = lookback_min_hours
         self.lookback_max_hours = lookback_max_hours
+        self.drop_invalid_anchors = drop_invalid_anchors
+        self._ecg_path_ok_cache: dict[str, bool] = {}
 
         raw = pd.read_csv(labeled_csv, low_memory=False)
         for c in (
@@ -120,6 +137,7 @@ class ECGLabeledCatalogDataset(Dataset):
         self.anchor_s2f_cls = np.full(n, -1, dtype=np.int64)
         self.anchor_p2f_cls = np.full(n, -1, dtype=np.int64)
         self.n_ecg_rows = []
+        self.n_ecg_rows_dropped_at_load = 0
 
         for i, grp in enumerate(groups):
             row0 = grp.iloc[0]
@@ -129,6 +147,9 @@ class ECGLabeledCatalogDataset(Dataset):
             self.anchor_p2f_cls[i] = _to_class_label(row0["p2f_vent_fio2_severity_change_12to24h"])
             self.n_ecg_rows.append(len(grp))
 
+        if drop_invalid_anchors:
+            self._drop_anchors_without_valid_ecg()
+
         seq_lens = np.array([max(1, x) for x in self.n_ecg_rows], dtype=np.int32)
         print(f"  Unique anchors (samples): n={n:,}")
         print(
@@ -137,6 +158,50 @@ class ECGLabeledCatalogDataset(Dataset):
         )
         self._print_label_stats()
         self._print_loadable_ecg_sample()
+
+    def _probe_ecg_path_ok(self, path: str) -> bool:
+        p = path.strip()
+        if not p:
+            return False
+        cached = self._ecg_path_ok_cache.get(p)
+        if cached is not None:
+            return cached
+        if not _wfdb_record_on_disk(p):
+            self._ecg_path_ok_cache[p] = False
+            return False
+        ecg = load_ecg(p, target_len=self.ecg_target_len)
+        if self.normalize_ecg_per_lead_flag:
+            ecg = normalize_ecg_per_lead(ecg)
+        ok = _ecg_loaded_ok(ecg)
+        self._ecg_path_ok_cache[p] = ok
+        return ok
+
+    def _anchor_has_valid_ecg(self, grp: pd.DataFrame) -> bool:
+        for _, row in grp.iterrows():
+            path = row.get("wf_File_Path")
+            if isinstance(path, str) and path.strip() and self._probe_ecg_path_ok(path):
+                return True
+        return False
+
+    def _drop_anchors_without_valid_ecg(self) -> None:
+        n_before = len(self.groups)
+        keep: List[int] = []
+        for i, grp in enumerate(self.groups):
+            if self._anchor_has_valid_ecg(grp):
+                keep.append(i)
+            elif (i + 1) % 5000 == 0:
+                print(f"  Scanning ECG load validity: {i + 1:,}/{n_before:,} anchors...")
+        n_drop = n_before - len(keep)
+        if n_drop == 0:
+            print(f"  Drop invalid ECG anchors: 0 / {n_before:,} (all anchors have >=1 valid waveform)")
+            return
+        print(f"  Drop invalid ECG anchors: {n_drop:,} / {n_before:,} (no loadable non-zero waveform)")
+        self.groups = [self.groups[i] for i in keep]
+        self.anchor_has_s2f = self.anchor_has_s2f[keep]
+        self.anchor_has_p2f = self.anchor_has_p2f[keep]
+        self.anchor_s2f_cls = self.anchor_s2f_cls[keep]
+        self.anchor_p2f_cls = self.anchor_p2f_cls[keep]
+        self.n_ecg_rows = [self.n_ecg_rows[i] for i in keep]
 
     def _print_label_stats(self) -> None:
         n = len(self)
@@ -168,7 +233,7 @@ class ECGLabeledCatalogDataset(Dataset):
         ok_anchors = sum(1 for idx in idxs if self._count_loadable(int(idx)) > 0)
         print(
             f"  Loadable ECG (sample {len(idxs)} anchors): {ok_anchors}/{len(idxs)} "
-            f"({100.0 * ok_anchors / len(idxs):.1f}%) have >=1 waveform on disk"
+            f"({100.0 * ok_anchors / len(idxs):.1f}%) have >=1 WFDB record (.hea) on disk"
         )
 
     def _count_loadable(self, idx: int) -> int:
@@ -176,17 +241,22 @@ class ECGLabeledCatalogDataset(Dataset):
         return sum(1 for _, row in grp.iterrows() if self._row_has_ecg(row))
 
     def _row_has_ecg(self, row: pd.Series) -> bool:
+        """Fast check for init diagnostics (WFDB ``.hea`` present; same rule as ECGUni/verify_inputs)."""
         path = row.get("wf_File_Path")
-        return bool(isinstance(path, str) and path.strip() and os.path.isfile(path.strip()))
+        return bool(isinstance(path, str) and path.strip() and _wfdb_record_on_disk(path.strip()))
 
     def _load_ecg(self, row: pd.Series) -> Tuple[torch.Tensor, bool]:
+        """Match ECGUni: always wfdb.rdsamp when path is set; do not gate on os.path.isfile(path)."""
         path = row.get("wf_File_Path")
-        if isinstance(path, str) and path.strip() and os.path.isfile(path.strip()):
-            ecg = load_ecg(path.strip(), target_len=self.ecg_target_len)
-            if self.normalize_ecg_per_lead_flag:
-                ecg = normalize_ecg_per_lead(ecg)
-            return ecg, True
-        return torch.zeros(12, self.ecg_target_len), False
+        if not isinstance(path, str) or not path.strip():
+            return torch.zeros(12, self.ecg_target_len), False
+        p = path.strip()
+        if not _wfdb_record_on_disk(p):
+            return torch.zeros(12, self.ecg_target_len), False
+        ecg = load_ecg(p, target_len=self.ecg_target_len)
+        if self.normalize_ecg_per_lead_flag:
+            ecg = normalize_ecg_per_lead(ecg)
+        return ecg, _ecg_loaded_ok(ecg)
 
     def __len__(self) -> int:
         return len(self.groups)
@@ -196,8 +266,11 @@ class ECGLabeledCatalogDataset(Dataset):
         ecgs, m_ecg = [], []
         for _, row in grp.iterrows():
             wav, ok = self._load_ecg(row)
-            ecgs.append(wav)
-            m_ecg.append(ok)
+            if ok:
+                ecgs.append(wav)
+                m_ecg.append(True)
+            else:
+                self.n_ecg_rows_dropped_at_load += 1
         if not ecgs:
             ecgs = [torch.zeros(12, self.ecg_target_len)]
             m_ecg = [False]

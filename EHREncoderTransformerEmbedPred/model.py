@@ -1,4 +1,4 @@
-"""EHR-only: 3-layer row MLP -> causal transformer -> dual MLP heads for s2f/p2f change."""
+"""EHR-only: row MLP -> causal transformer -> dual cls heads + anchor-embed prediction head."""
 from __future__ import annotations
 
 import sys
@@ -31,12 +31,13 @@ def _change_cls_head(embed_dim: int, num_classes: int, dropout: float) -> nn.Seq
     )
 
 
-class EHREncoderTransformer(nn.Module):
+class EHREncoderTransformerEmbedPred(nn.Module):
     """
-    Per-row ``EHRMLPEncoder`` -> causal transformer -> anchor pooling -> s2f/p2f MLP heads.
+    Per-row ``EHRMLPEncoder`` -> causal transformer on [t-24h, t-12h] + anchor@t -> anchor pooling.
 
-    Input sequence = EHR rows in [anchor_t - 24h, anchor_t - 12h] plus anchor row at t
-    (percentile features). Targets = anchor ``*_severity_change_12to24h`` (3-class).
+    Heads:
+    - s2f / p2f change classification (same as EHREncoderTransformer)
+    - anchor embed prediction: pooled transformer state -> embed_dim (target = row_encoder(t))
     """
 
     def __init__(
@@ -79,6 +80,7 @@ class EHREncoderTransformer(nn.Module):
         self.enc_norm = nn.LayerNorm(d_model)
         self.head_s2f = _change_cls_head(d_model, num_classes, head_dropout)
         self.head_p2f = _change_cls_head(d_model, num_classes, head_dropout)
+        self.head_anchor_embed = nn.Linear(d_model, embed_dim)
 
     def _pool_anchor(self, h: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         """h: B,T,D; mask: B,T True=valid."""
@@ -114,6 +116,13 @@ class EHREncoderTransformer(nn.Module):
         anchor_vec = self._pool_anchor(h, ehr_mask)
         return anchor_vec, z0
 
-    def forward(self, ehr_seq: torch.Tensor, ehr_mask: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(
+        self, ehr_seq: torch.Tensor, ehr_mask: torch.Tensor, return_pred_embed: bool = False
+    ) -> Tuple[torch.Tensor, torch.Tensor] | Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         anchor_vec, _ = self.forward_transformer(ehr_seq, ehr_mask)
-        return self.head_s2f(anchor_vec), self.head_p2f(anchor_vec)
+        log_s2f = self.head_s2f(anchor_vec)
+        log_p2f = self.head_p2f(anchor_vec)
+        if return_pred_embed:
+            pred_embed = self.head_anchor_embed(anchor_vec)
+            return log_s2f, log_p2f, pred_embed
+        return log_s2f, log_p2f
