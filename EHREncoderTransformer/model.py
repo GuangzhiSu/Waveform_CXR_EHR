@@ -35,8 +35,9 @@ class EHREncoderTransformer(nn.Module):
     """
     Per-row ``EHRMLPEncoder`` -> causal transformer -> anchor pooling -> s2f/p2f MLP heads.
 
-    Input sequence = EHR rows in [anchor_t - 24h, anchor_t - 12h] plus anchor row at t
-    (percentile features). Targets = anchor ``*_severity_change_12to24h`` (3-class).
+    Input sequence = EHR rows in [anchor_t - 24h, anchor_t - 12h]
+    (Symile-style: percentile features concatenated with presence indicators, dim 2F).
+    Targets = anchor ``*_severity_change_12to24h`` (3-class) at time t.
     """
 
     def __init__(

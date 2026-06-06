@@ -46,6 +46,7 @@ from config import (  # noqa: E402
     EMBED_DIM,
     ENRICHED_CSV,
     HEAD_DROPOUT,
+    INCLUDE_ANCHOR_ROW,
     LOOKBACK_MAX_HOURS,
     LOOKBACK_MIN_HOURS,
     MAX_SEQ_LENGTH,
@@ -333,11 +334,14 @@ def _build_val_dataset(seed: int) -> tuple[np.ndarray, EHRAnchorEmbedDataset, Su
         enriched_csv=enr,
         lookback_min_hours=LOOKBACK_MIN_HOURS,
         lookback_max_hours=LOOKBACK_MAX_HOURS,
-        include_anchor_row=True,
+        include_anchor_row=INCLUDE_ANCHOR_ROW,
     )
     y = _stratify_labels_from_dataset(full_ds)
     test_split = 1.0 - TRAIN_SPLIT - VAL_SPLIT
-    _, idx_val, _ = stratified_train_val_test_indices(y, TRAIN_SPLIT, VAL_SPLIT, test_split, seed)
+    idx_train, idx_val, _ = stratified_train_val_test_indices(
+        y, TRAIN_SPLIT, VAL_SPLIT, test_split, seed
+    )
+    full_ds.fit_preprocess(idx_train)
     val_ds = make_subset(full_ds, idx_val)
     return idx_val, full_ds, val_ds
 

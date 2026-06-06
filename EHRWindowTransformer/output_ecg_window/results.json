@@ -1,0 +1,18 @@
+{
+  "task": "ecg_window_transformer_anchor_s2f_p2f",
+  "lookback_hours": [
+    24,
+    12
+  ],
+  "ecg_target_len": 5000,
+  "best_val_loss": 1.845055195568365,
+  "best_epoch": 5,
+  "stopped_early": true,
+  "test": {
+    "loss": 1.8453661245976236,
+    "ce_s2f": 0.9383015146891021,
+    "ce_p2f": 0.9070646057211219,
+    "acc_s2f": 0.5699593534360525,
+    "acc_p2f": 0.5543544386728438
+  }
+}

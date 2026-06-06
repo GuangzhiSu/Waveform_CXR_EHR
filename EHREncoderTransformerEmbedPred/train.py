@@ -469,8 +469,17 @@ def main(args):
     print(
         f"  Loss: l_embed={args.l_embed}  p2f_weight={args.p2f_loss_weight}  "
         f"class_weights={args.use_class_weights}  grad_clip={args.grad_clip_norm}  "
-        f"include_anchor_row={args.include_anchor_row}  embed_target=row_encoder_detach"
+        f"include_anchor_row={args.include_anchor_row}  embed_target=row_encoder_detach  "
+        f"preprocess=symile_pct+indicator"
     )
+    y = _stratify_labels_from_dataset(full_ds)
+
+    test_split = 1.0 - args.train_split - args.val_split
+    idx_train, idx_val, idx_test = stratified_train_val_test_indices(
+        y, args.train_split, args.val_split, test_split, args.seed
+    )
+    full_ds.fit_preprocess(idx_train)
+
     n_all = len(full_ds)
     if args.max_samples and args.max_samples < n_all:
         rng = np.random.RandomState(args.seed)
@@ -480,14 +489,11 @@ def main(args):
 
     base = full_ds.dataset if isinstance(full_ds, Subset) else full_ds
     input_dim = base.input_dim
-    y = _stratify_labels_from_dataset(base)
     if isinstance(full_ds, Subset):
         y = y[np.array(full_ds.indices, dtype=np.int64)]
-
-    test_split = 1.0 - args.train_split - args.val_split
-    idx_train, idx_val, idx_test = stratified_train_val_test_indices(
-        y, args.train_split, args.val_split, test_split, args.seed
-    )
+        idx_train, idx_val, idx_test = stratified_train_val_test_indices(
+            y, args.train_split, args.val_split, test_split, args.seed
+        )
     train_ds = make_subset(full_ds, idx_train)
     val_ds = make_subset(full_ds, idx_val)
     test_ds = make_subset(full_ds, idx_test)

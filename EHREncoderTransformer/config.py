@@ -35,8 +35,8 @@ EARLY_STOP_PATIENCE = 10
 EARLY_STOP_MIN_DELTA = 1e-4
 OUTPUT_DIR = str(EXP_DIR / "output")
 
-# Dataset: append anchor-time EHR row so pooling sees state at t (not only t-12h).
-INCLUDE_ANCHOR_ROW = True
+# Input sequence = lookback [t-24h, t-12h] only (no anchor@t row).
+INCLUDE_ANCHOR_ROW = False
 # Up-weight p2f CE vs s2f (train ~10:1 s2f:p2f anchors per batch).
 P2F_LOSS_WEIGHT = 10.0
 USE_CLASS_WEIGHTS = True

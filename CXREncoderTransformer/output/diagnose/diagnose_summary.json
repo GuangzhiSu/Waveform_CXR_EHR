@@ -1,0 +1,287 @@
+{
+  "device": "cuda",
+  "max_samples": 3000,
+  "epochs": 5,
+  "experiments": {
+    "E_full_baseline": {
+      "val_acc_s2f": 0.1603563474387528,
+      "majority_baseline": 0.6458797327394209,
+      "macro_f1_s2f": 0.09213051823416507,
+      "pred_hist_s2f": [
+        0,
+        0,
+        449
+      ],
+      "n_unique_predictions": 1,
+      "collapsed_to_one_class": true,
+      "epoch_history": [
+        {
+          "epoch": 1,
+          "val_acc_s2f": 0.1603563474387528,
+          "val_loss": 1.0529653628667195,
+          "pred_hist_s2f": [
+            0,
+            0,
+            449
+          ]
+        },
+        {
+          "epoch": 2,
+          "val_acc_s2f": 0.19376391982182628,
+          "val_loss": 1.073803702990214,
+          "pred_hist_s2f": [
+            449,
+            0,
+            0
+          ]
+        },
+        {
+          "epoch": 3,
+          "val_acc_s2f": 0.19376391982182628,
+          "val_loss": 1.0524845679601034,
+          "pred_hist_s2f": [
+            449,
+            0,
+            0
+          ]
+        },
+        {
+          "epoch": 4,
+          "val_acc_s2f": 0.6458797327394209,
+          "val_loss": 1.065093735853831,
+          "pred_hist_s2f": [
+            0,
+            449,
+            0
+          ]
+        },
+        {
+          "epoch": 5,
+          "val_acc_s2f": 0.1603563474387528,
+          "val_loss": 1.0464651505152385,
+          "pred_hist_s2f": [
+            0,
+            0,
+            449
+          ]
+        }
+      ],
+      "pass_note": "baseline collapse reproduced"
+    },
+    "A_label_shuffle": {
+      "val_acc_s2f": 0.19376391982182628,
+      "majority_baseline": 0.6458797327394209,
+      "macro_f1_s2f": 0.10820895522388059,
+      "pred_hist_s2f": [
+        449,
+        0,
+        0
+      ],
+      "n_unique_predictions": 1,
+      "collapsed_to_one_class": true,
+      "epoch_history": [
+        {
+          "epoch": 1,
+          "val_acc_s2f": 0.19376391982182628,
+          "val_loss": 1.061325744787852,
+          "pred_hist_s2f": [
+            449,
+            0,
+            0
+          ]
+        },
+        {
+          "epoch": 2,
+          "val_acc_s2f": 0.6458797327394209,
+          "val_loss": 1.0640561203161876,
+          "pred_hist_s2f": [
+            0,
+            449,
+            0
+          ]
+        },
+        {
+          "epoch": 3,
+          "val_acc_s2f": 0.19376391982182628,
+          "val_loss": 1.0439131379127502,
+          "pred_hist_s2f": [
+            449,
+            0,
+            0
+          ]
+        },
+        {
+          "epoch": 4,
+          "val_acc_s2f": 0.6458797327394209,
+          "val_loss": 1.0897728045781454,
+          "pred_hist_s2f": [
+            0,
+            449,
+            0
+          ]
+        },
+        {
+          "epoch": 5,
+          "val_acc_s2f": 0.19376391982182628,
+          "val_loss": 1.0538189967473348,
+          "pred_hist_s2f": [
+            449,
+            0,
+            0
+          ]
+        }
+      ],
+      "pass": false
+    },
+    "B_image_shuffle": {
+      "val_acc_s2f_real_images": 0.6458797327394209,
+      "val_acc_s2f_shuffled_images": 0.6458797327394209,
+      "acc_drop": 0.0,
+      "pass": false,
+      "train_summary": {
+        "val_acc_s2f": 0.6458797327394209,
+        "majority_baseline": 0.6458797327394209,
+        "macro_f1_s2f": 0.2616147947677041,
+        "pred_hist_s2f": [
+          0,
+          449,
+          0
+        ],
+        "n_unique_predictions": 1,
+        "collapsed_to_one_class": true,
+        "epoch_history": [
+          {
+            "epoch": 1,
+            "val_acc_s2f": 0.19376391982182628,
+            "val_loss": 1.0743655761082966,
+            "pred_hist_s2f": [
+              449,
+              0,
+              0
+            ]
+          },
+          {
+            "epoch": 2,
+            "val_acc_s2f": 0.6458797327394209,
+            "val_loss": 1.0421528935432434,
+            "pred_hist_s2f": [
+              0,
+              449,
+              0
+            ]
+          },
+          {
+            "epoch": 3,
+            "val_acc_s2f": 0.6458797327394209,
+            "val_loss": 1.0402106602986654,
+            "pred_hist_s2f": [
+              0,
+              449,
+              0
+            ]
+          },
+          {
+            "epoch": 4,
+            "val_acc_s2f": 0.19376391982182628,
+            "val_loss": 1.0545633872350058,
+            "pred_hist_s2f": [
+              449,
+              0,
+              0
+            ]
+          },
+          {
+            "epoch": 5,
+            "val_acc_s2f": 0.6458797327394209,
+            "val_loss": 1.0417105873425803,
+            "pred_hist_s2f": [
+              0,
+              449,
+              0
+            ]
+          }
+        ]
+      }
+    },
+    "C_anchor_vec_variance": {
+      "init": {
+        "n_samples": 450,
+        "anchor_vec_std_mean": 0.1393350213766098,
+        "anchor_vec_std_min": 0.017263028770685196,
+        "anchor_vec_norm_mean": 15.999922752380371
+      },
+      "after_train": {
+        "n_samples": 450,
+        "anchor_vec_std_mean": 0.01543679740279913,
+        "anchor_vec_std_min": 0.0010483136866241693,
+        "anchor_vec_norm_mean": 15.933728218078613
+      },
+      "pass": true
+    },
+    "D_linear_probe": {
+      "val_acc_s2f": 0.5434298440979956,
+      "majority_baseline": 0.6458797327394209,
+      "macro_f1_s2f": 0.3080519480519481,
+      "pred_hist_s2f": [
+        13,
+        354,
+        82
+      ],
+      "n_unique_predictions": 3,
+      "collapsed_to_one_class": false,
+      "epoch_history": [
+        {
+          "epoch": 1,
+          "val_acc_s2f": 0.3897550111358575,
+          "val_loss": 1.1014182726542154,
+          "pred_hist_s2f": [
+            233,
+            191,
+            25
+          ]
+        },
+        {
+          "epoch": 2,
+          "val_acc_s2f": 0.2383073496659243,
+          "val_loss": 1.0973892529805502,
+          "pred_hist_s2f": [
+            357,
+            49,
+            43
+          ]
+        },
+        {
+          "epoch": 3,
+          "val_acc_s2f": 0.5657015590200446,
+          "val_loss": 1.1023800214131674,
+          "pred_hist_s2f": [
+            44,
+            368,
+            37
+          ]
+        },
+        {
+          "epoch": 4,
+          "val_acc_s2f": 0.512249443207127,
+          "val_loss": 1.0976263682047527,
+          "pred_hist_s2f": [
+            78,
+            311,
+            60
+          ]
+        },
+        {
+          "epoch": 5,
+          "val_acc_s2f": 0.5434298440979956,
+          "val_loss": 1.1146557887395223,
+          "pred_hist_s2f": [
+            13,
+            354,
+            82
+          ]
+        }
+      ],
+      "pass": false
+    }
+  }
+}

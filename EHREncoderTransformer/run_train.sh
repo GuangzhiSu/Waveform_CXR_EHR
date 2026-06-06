@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH -J ehr-enc-tr
+#SBATCH -J ehr-symile-tr
 #SBATCH -t 24:00:00
 #SBATCH -A kamaleswaranlab
 #SBATCH -p gpu-common
@@ -12,7 +12,7 @@
 #SBATCH -o logs/%x-%j.out
 #SBATCH -e logs/%x-%j.err
 
-# EHREncoderTransformer: 3-layer row MLP -> causal transformer -> dual s2f/p2f change heads.
+# EHREncoderTransformer (Symile pct+indicator preprocess): row MLP -> causal transformer -> dual cls heads.
 
 set -euo pipefail
 

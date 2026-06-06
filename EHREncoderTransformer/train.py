@@ -22,6 +22,7 @@ sys.path.insert(0, str(_EXP))
 from classification_utils import make_subset, stratified_train_val_test_indices  # noqa: E402
 from config import *  # noqa: F401,F403,E402
 from ehr_nextstep_dataset import EHRNextStepDataset  # noqa: E402
+from ehr_symile_dataset import EHRNextStepDatasetSymile  # noqa: E402
 from model import EHREncoderTransformer  # noqa: E402
 
 
@@ -45,7 +46,7 @@ def _inverse_freq_weights(counts: np.ndarray, num_classes: int, device: torch.de
 
 
 def _head_class_weights(
-    ds: EHRNextStepDataset,
+    ds: EHRNextStepDataset | EHRNextStepDatasetSymile,
     indices: np.ndarray,
     has_attr: str,
     cls_attr: str,
@@ -94,7 +95,7 @@ def collate_anchor_batch(batch):
     }
 
 
-def _stratify_labels_from_dataset(ds: EHRNextStepDataset) -> np.ndarray:
+def _stratify_labels_from_dataset(ds: EHRNextStepDataset | EHRNextStepDatasetSymile) -> np.ndarray:
     n = len(ds)
     y = np.zeros(n, dtype=np.int64)
     for i in range(n):
@@ -424,7 +425,7 @@ def main(args):
         print(f"  No enriched join (missing file): {enr!r}")
         enr = None
 
-    full_ds = EHRNextStepDataset(
+    full_ds = EHRNextStepDatasetSymile(
         anchor_source_csv=args.anchor_csv,
         history_csv=args.history_csv,
         schema_csv=args.schema_csv,
@@ -435,8 +436,16 @@ def main(args):
     )
     print(
         f"  Loss: p2f_weight={args.p2f_loss_weight}  class_weights={args.use_class_weights}  "
-        f"include_anchor_row={args.include_anchor_row}"
+        f"include_anchor_row={args.include_anchor_row}  preprocess=symile_pct+indicator"
     )
+    y = _stratify_labels_from_dataset(full_ds)
+
+    test_split = 1.0 - args.train_split - args.val_split
+    idx_train, idx_val, idx_test = stratified_train_val_test_indices(
+        y, args.train_split, args.val_split, test_split, args.seed
+    )
+    full_ds.fit_preprocess(idx_train)
+
     n_all = len(full_ds)
     if args.max_samples and args.max_samples < n_all:
         rng = np.random.RandomState(args.seed)
@@ -446,14 +455,11 @@ def main(args):
 
     base = full_ds.dataset if isinstance(full_ds, Subset) else full_ds
     input_dim = base.input_dim
-    y = _stratify_labels_from_dataset(base)
     if isinstance(full_ds, Subset):
         y = y[np.array(full_ds.indices, dtype=np.int64)]
-
-    test_split = 1.0 - args.train_split - args.val_split
-    idx_train, idx_val, idx_test = stratified_train_val_test_indices(
-        y, args.train_split, args.val_split, test_split, args.seed
-    )
+        idx_train, idx_val, idx_test = stratified_train_val_test_indices(
+            y, args.train_split, args.val_split, test_split, args.seed
+        )
     train_ds = make_subset(full_ds, idx_train)
     val_ds = make_subset(full_ds, idx_val)
     test_ds = make_subset(full_ds, idx_test)

@@ -38,7 +38,8 @@ EARLY_STOP_PATIENCE = 10
 EARLY_STOP_MIN_DELTA = 1e-4
 OUTPUT_DIR = str(EXP_DIR / "output")
 
-INCLUDE_ANCHOR_ROW = True
+# Input sequence = lookback [t-24h, t-12h] only; anchor_ehr@t used only as embed-loss target.
+INCLUDE_ANCHOR_ROW = False
 P2F_LOSS_WEIGHT = 10.0
 USE_CLASS_WEIGHTS = True
 GRAD_CLIP_NORM = 1.0

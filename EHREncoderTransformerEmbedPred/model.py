@@ -33,7 +33,8 @@ def _change_cls_head(embed_dim: int, num_classes: int, dropout: float) -> nn.Seq
 
 class EHREncoderTransformerEmbedPred(nn.Module):
     """
-    Per-row ``EHRMLPEncoder`` -> causal transformer on [t-24h, t-12h] + anchor@t -> anchor pooling.
+    Per-row ``EHRMLPEncoder`` -> causal transformer on [t-24h, t-12h] lookback -> anchor pooling.
+    Row input = Symile-style percentile features concatenated with presence indicators (dim 2F).
 
     Heads:
     - s2f / p2f change classification (same as EHREncoderTransformer)

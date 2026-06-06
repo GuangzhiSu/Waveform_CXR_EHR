@@ -1,0 +1,8 @@
+{
+  "test_loss": 1.7895227020785112,
+  "test_acc_anchor_s2f": 0.5716482339225509,
+  "test_acc_anchor_p2f": 0.5581917731292995,
+  "pretrained_forward_mlp_ckpt": "/work/gs285/Waveform_CXR_EHR/EHRTrend/output_forward_mlp/best.pt",
+  "frozen_row_encoder_and_disc_heads": true,
+  "use_step_disc_loss": false
+}

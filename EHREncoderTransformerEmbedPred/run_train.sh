@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH -J ehr-enc-embed
+#SBATCH -J ehr-symile-embed
 #SBATCH -t 24:00:00
 #SBATCH -A kamaleswaranlab
 #SBATCH -p gpu-common
@@ -12,7 +12,7 @@
 #SBATCH -o logs/%x-%j.out
 #SBATCH -e logs/%x-%j.err
 
-# EHREncoderTransformerEmbedPred: EHREncoderTransformer + anchor-embed prediction loss.
+# EHREncoderTransformerEmbedPred (Symile pct+indicator): cls heads + anchor-embed prediction loss.
 
 set -euo pipefail
 
@@ -29,7 +29,7 @@ OUTPUT_DIR="${SCRIPT_DIR}/output"
 mkdir -p "${PROJECT_DIR}/logs"
 cd "${PROJECT_DIR}" || exit 1
 
-export PYTHONPATH="${PROJECT_DIR}:${SCRIPT_DIR}:${PROJECT_DIR}/EHRTrend:${PROJECT_DIR}/BaselineExperiment"
+export PYTHONPATH="${PROJECT_DIR}:${SCRIPT_DIR}:${PROJECT_DIR}/EHREncoderTransformer:${PROJECT_DIR}/EHRTrend:${PROJECT_DIR}/BaselineExperiment"
 
 [[ -n "$(command -v conda)" ]] && {
   eval "$(conda shell.bash hook 2>/dev/null)" || true

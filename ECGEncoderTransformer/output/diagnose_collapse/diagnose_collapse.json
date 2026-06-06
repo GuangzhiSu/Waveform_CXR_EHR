@@ -1,0 +1,414 @@
+{
+  "device": "cuda",
+  "ecg_ckpt": "/work/gs285/MedTVT-R1/CKPTS/epoch=49-val_loss=0.4944.ckpt",
+  "max_samples": 2000,
+  "epochs": 5,
+  "experiments": {
+    "A_legacy_defaults": {
+      "val_acc_s2f": 0.5472972972972973,
+      "majority_baseline": 0.5472972972972973,
+      "macro_f1_s2f": 0.23580786026200873,
+      "pred_hist_s2f": [
+        0,
+        296,
+        0
+      ],
+      "n_unique_predictions": 1,
+      "collapsed_to_one_class": true,
+      "param_l2_finite": true,
+      "param_l2": 78.73973243299658,
+      "val_loss_finite": true,
+      "n_skipped_nonfinite_loss": 0,
+      "n_skipped_nonfinite_grad": 0,
+      "n_rollback": 0,
+      "epoch_history": [
+        {
+          "epoch": 1,
+          "val_acc_s2f": 0.5472972972972973,
+          "val_loss": 0.9751934095432884,
+          "pred_hist_s2f": [
+            0,
+            296,
+            0
+          ],
+          "n_unique_pred_s2f": 1,
+          "n_skipped_nonfinite": 0
+        },
+        {
+          "epoch": 2,
+          "val_acc_s2f": 0.5472972972972973,
+          "val_loss": 0.9610703399306849,
+          "pred_hist_s2f": [
+            0,
+            296,
+            0
+          ],
+          "n_unique_pred_s2f": 1,
+          "n_skipped_nonfinite": 0
+        },
+        {
+          "epoch": 3,
+          "val_acc_s2f": 0.5472972972972973,
+          "val_loss": 0.9595529154727334,
+          "pred_hist_s2f": [
+            0,
+            296,
+            0
+          ],
+          "n_unique_pred_s2f": 1,
+          "n_skipped_nonfinite": 0
+        },
+        {
+          "epoch": 4,
+          "val_acc_s2f": 0.5472972972972973,
+          "val_loss": 0.9575963051695573,
+          "pred_hist_s2f": [
+            0,
+            296,
+            0
+          ],
+          "n_unique_pred_s2f": 1,
+          "n_skipped_nonfinite": 0
+        },
+        {
+          "epoch": 5,
+          "val_acc_s2f": 0.5472972972972973,
+          "val_loss": 0.9605769609150133,
+          "pred_hist_s2f": [
+            0,
+            296,
+            0
+          ],
+          "n_unique_pred_s2f": 1,
+          "n_skipped_nonfinite": 0
+        }
+      ],
+      "pass": false
+    },
+    "B_mild_loss": {
+      "val_acc_s2f": 0.5472972972972973,
+      "majority_baseline": 0.5472972972972973,
+      "macro_f1_s2f": 0.23580786026200873,
+      "pred_hist_s2f": [
+        0,
+        296,
+        0
+      ],
+      "n_unique_predictions": 1,
+      "collapsed_to_one_class": true,
+      "param_l2_finite": true,
+      "param_l2": 78.7119004032789,
+      "val_loss_finite": true,
+      "n_skipped_nonfinite_loss": 0,
+      "n_skipped_nonfinite_grad": 0,
+      "n_rollback": 0,
+      "epoch_history": [
+        {
+          "epoch": 1,
+          "val_acc_s2f": 0.5472972972972973,
+          "val_loss": 0.9850359182608756,
+          "pred_hist_s2f": [
+            0,
+            296,
+            0
+          ],
+          "n_unique_pred_s2f": 1,
+          "n_skipped_nonfinite": 0
+        },
+        {
+          "epoch": 2,
+          "val_acc_s2f": 0.5472972972972973,
+          "val_loss": 0.987429678440094,
+          "pred_hist_s2f": [
+            0,
+            296,
+            0
+          ],
+          "n_unique_pred_s2f": 1,
+          "n_skipped_nonfinite": 0
+        },
+        {
+          "epoch": 3,
+          "val_acc_s2f": 0.5472972972972973,
+          "val_loss": 0.9903730028554013,
+          "pred_hist_s2f": [
+            0,
+            296,
+            0
+          ],
+          "n_unique_pred_s2f": 1,
+          "n_skipped_nonfinite": 0
+        },
+        {
+          "epoch": 4,
+          "val_acc_s2f": 0.5472972972972973,
+          "val_loss": 0.9932252701960111,
+          "pred_hist_s2f": [
+            0,
+            296,
+            0
+          ],
+          "n_unique_pred_s2f": 1,
+          "n_skipped_nonfinite": 0
+        },
+        {
+          "epoch": 5,
+          "val_acc_s2f": 0.5472972972972973,
+          "val_loss": 0.9887292385101318,
+          "pred_hist_s2f": [
+            0,
+            296,
+            0
+          ],
+          "n_unique_pred_s2f": 1,
+          "n_skipped_nonfinite": 0
+        }
+      ],
+      "pass": false
+    },
+    "C_low_lr": {
+      "val_acc_s2f": 0.5472972972972973,
+      "majority_baseline": 0.5472972972972973,
+      "macro_f1_s2f": 0.23580786026200873,
+      "pred_hist_s2f": [
+        0,
+        296,
+        0
+      ],
+      "n_unique_predictions": 1,
+      "collapsed_to_one_class": true,
+      "param_l2_finite": true,
+      "param_l2": 78.47379169110778,
+      "val_loss_finite": true,
+      "n_skipped_nonfinite_loss": 0,
+      "n_skipped_nonfinite_grad": 0,
+      "n_rollback": 0,
+      "epoch_history": [
+        {
+          "epoch": 1,
+          "val_acc_s2f": 0.5472972972972973,
+          "val_loss": 0.9938135398061652,
+          "pred_hist_s2f": [
+            0,
+            296,
+            0
+          ],
+          "n_unique_pred_s2f": 1,
+          "n_skipped_nonfinite": 0
+        },
+        {
+          "epoch": 2,
+          "val_acc_s2f": 0.5472972972972973,
+          "val_loss": 0.9912565601499457,
+          "pred_hist_s2f": [
+            0,
+            296,
+            0
+          ],
+          "n_unique_pred_s2f": 1,
+          "n_skipped_nonfinite": 0
+        },
+        {
+          "epoch": 3,
+          "val_acc_s2f": 0.5472972972972973,
+          "val_loss": 0.9904417615187796,
+          "pred_hist_s2f": [
+            0,
+            296,
+            0
+          ],
+          "n_unique_pred_s2f": 1,
+          "n_skipped_nonfinite": 0
+        },
+        {
+          "epoch": 4,
+          "val_acc_s2f": 0.5472972972972973,
+          "val_loss": 0.987646149961572,
+          "pred_hist_s2f": [
+            0,
+            296,
+            0
+          ],
+          "n_unique_pred_s2f": 1,
+          "n_skipped_nonfinite": 0
+        },
+        {
+          "epoch": 5,
+          "val_acc_s2f": 0.5472972972972973,
+          "val_loss": 0.9841531232783669,
+          "pred_hist_s2f": [
+            0,
+            296,
+            0
+          ],
+          "n_unique_pred_s2f": 1,
+          "n_skipped_nonfinite": 0
+        }
+      ],
+      "pass": false
+    },
+    "D_combined_mask_is_default": {
+      "val_acc_s2f": 0.5472972972972973,
+      "majority_baseline": 0.5472972972972973,
+      "macro_f1_s2f": 0.23580786026200873,
+      "pred_hist_s2f": [
+        0,
+        296,
+        0
+      ],
+      "n_unique_predictions": 1,
+      "collapsed_to_one_class": true,
+      "param_l2_finite": true,
+      "param_l2": 78.4787108647405,
+      "val_loss_finite": true,
+      "n_skipped_nonfinite_loss": 0,
+      "n_skipped_nonfinite_grad": 0,
+      "n_rollback": 0,
+      "epoch_history": [
+        {
+          "epoch": 1,
+          "val_acc_s2f": 0.5472972972972973,
+          "val_loss": 1.003852809730329,
+          "pred_hist_s2f": [
+            0,
+            296,
+            0
+          ],
+          "n_unique_pred_s2f": 1,
+          "n_skipped_nonfinite": 0
+        },
+        {
+          "epoch": 2,
+          "val_acc_s2f": 0.5472972972972973,
+          "val_loss": 0.992394368899496,
+          "pred_hist_s2f": [
+            0,
+            296,
+            0
+          ],
+          "n_unique_pred_s2f": 1,
+          "n_skipped_nonfinite": 0
+        },
+        {
+          "epoch": 3,
+          "val_acc_s2f": 0.5472972972972973,
+          "val_loss": 0.989033768051549,
+          "pred_hist_s2f": [
+            0,
+            296,
+            0
+          ],
+          "n_unique_pred_s2f": 1,
+          "n_skipped_nonfinite": 0
+        },
+        {
+          "epoch": 4,
+          "val_acc_s2f": 0.5472972972972973,
+          "val_loss": 0.9941141323039406,
+          "pred_hist_s2f": [
+            0,
+            296,
+            0
+          ],
+          "n_unique_pred_s2f": 1,
+          "n_skipped_nonfinite": 0
+        },
+        {
+          "epoch": 5,
+          "val_acc_s2f": 0.5472972972972973,
+          "val_loss": 0.9854596351322374,
+          "pred_hist_s2f": [
+            0,
+            296,
+            0
+          ],
+          "n_unique_pred_s2f": 1,
+          "n_skipped_nonfinite": 0
+        }
+      ],
+      "pass": false
+    },
+    "E_stable_with_rollback": {
+      "val_acc_s2f": 0.5472972972972973,
+      "majority_baseline": 0.5472972972972973,
+      "macro_f1_s2f": 0.23580786026200873,
+      "pred_hist_s2f": [
+        0,
+        296,
+        0
+      ],
+      "n_unique_predictions": 1,
+      "collapsed_to_one_class": true,
+      "param_l2_finite": true,
+      "param_l2": 78.4764564880974,
+      "val_loss_finite": true,
+      "n_skipped_nonfinite_loss": 0,
+      "n_skipped_nonfinite_grad": 0,
+      "n_rollback": 0,
+      "epoch_history": [
+        {
+          "epoch": 1,
+          "val_acc_s2f": 0.5472972972972973,
+          "val_loss": 0.9890989598475004,
+          "pred_hist_s2f": [
+            0,
+            296,
+            0
+          ],
+          "n_unique_pred_s2f": 1,
+          "n_skipped_nonfinite": 0
+        },
+        {
+          "epoch": 2,
+          "val_acc_s2f": 0.5472972972972973,
+          "val_loss": 1.0210977824110734,
+          "pred_hist_s2f": [
+            0,
+            296,
+            0
+          ],
+          "n_unique_pred_s2f": 1,
+          "n_skipped_nonfinite": 0
+        },
+        {
+          "epoch": 3,
+          "val_acc_s2f": 0.5472972972972973,
+          "val_loss": 0.992372685357144,
+          "pred_hist_s2f": [
+            0,
+            296,
+            0
+          ],
+          "n_unique_pred_s2f": 1,
+          "n_skipped_nonfinite": 0
+        },
+        {
+          "epoch": 4,
+          "val_acc_s2f": 0.5472972972972973,
+          "val_loss": 0.9955021989972967,
+          "pred_hist_s2f": [
+            0,
+            296,
+            0
+          ],
+          "n_unique_pred_s2f": 1,
+          "n_skipped_nonfinite": 0
+        },
+        {
+          "epoch": 5,
+          "val_acc_s2f": 0.5472972972972973,
+          "val_loss": 0.9847917337166635,
+          "pred_hist_s2f": [
+            0,
+            296,
+            0
+          ],
+          "n_unique_pred_s2f": 1,
+          "n_skipped_nonfinite": 0
+        }
+      ],
+      "pass": false
+    }
+  },
+  "winners": []
+}
