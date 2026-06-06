@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH -J ehr-symile-embed
+#SBATCH -J ehr-symile-embed-2ph
 #SBATCH -t 24:00:00
 #SBATCH -A kamaleswaranlab
 #SBATCH -p gpu-common
@@ -12,7 +12,7 @@
 #SBATCH -o logs/%x-%j.out
 #SBATCH -e logs/%x-%j.err
 
-# EHREncoderTransformerEmbedPred (Symile pct+indicator): cls heads + anchor-embed prediction loss.
+# EHREncoderTransformerEmbedPred two-phase: embed pretrain (100ep) -> cls finetune (50ep).
 
 set -euo pipefail
 
@@ -25,7 +25,7 @@ else
 fi
 
 TRAIN_SCRIPT="${SCRIPT_DIR}/train.py"
-OUTPUT_DIR="${SCRIPT_DIR}/output"
+OUTPUT_DIR="${SCRIPT_DIR}/output_twophase"
 mkdir -p "${PROJECT_DIR}/logs"
 cd "${PROJECT_DIR}" || exit 1
 
@@ -51,6 +51,8 @@ python -u "${TRAIN_SCRIPT}" \
   --schema_csv "${PROJECT_DIR}/supertable_columns_completed.csv" \
   --enriched_csv "${PROJECT_DIR}/data/p2f_vent_fio2_enriched.csv" \
   --output_dir "${OUTPUT_DIR}" \
+  --pretrain_epochs 100 \
+  --finetune_epochs 50 \
   "$@"
 
 echo "=== Done ==="

@@ -25,7 +25,11 @@ MAX_SEQ_LENGTH = 512
 L_EMBED = 0.25
 
 BATCH_SIZE = 64
-EPOCHS = 50
+# Two-phase schedule: embed-only pretrain, then cls-only finetune.
+PRETRAIN_EPOCHS = 100
+FINETUNE_EPOCHS = 50
+EPOCHS = FINETUNE_EPOCHS  # backward-compatible alias
+PRETRAIN_EARLY_STOP_PATIENCE = 0
 LR = 5e-4
 WEIGHT_DECAY = 1e-3
 TRAIN_SPLIT = 0.7
@@ -36,7 +40,7 @@ NUM_WORKERS = 0
 
 EARLY_STOP_PATIENCE = 10
 EARLY_STOP_MIN_DELTA = 1e-4
-OUTPUT_DIR = str(EXP_DIR / "output")
+OUTPUT_DIR = str(EXP_DIR / "output_twophase")
 
 # Input sequence = lookback [t-24h, t-12h] only; anchor_ehr@t used only as embed-loss target.
 INCLUDE_ANCHOR_ROW = False

@@ -5,7 +5,9 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Literal, Optional, Tuple
+
+LossMode = Literal["embed_only", "cls_only", "all"]
 
 import numpy as np
 import torch
@@ -125,6 +127,7 @@ def forward_loss_parts(
     batch: dict,
     l_embed: float,
     *,
+    loss_mode: LossMode = "all",
     p2f_loss_weight: float = 1.0,
     s2f_class_weight: Optional[torch.Tensor] = None,
     p2f_class_weight: Optional[torch.Tensor] = None,
@@ -132,10 +135,14 @@ def forward_loss_parts(
     log_p2f: Optional[torch.Tensor] = None,
     pred_embed: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, dict]:
-    if log_s2f is None or log_p2f is None or pred_embed is None:
+    need_embed = loss_mode in ("embed_only", "all")
+    if need_embed and (log_s2f is None or log_p2f is None or pred_embed is None):
         log_s2f, log_p2f, pred_embed = model(
             batch["ehr_seq"], batch["ehr_mask"], return_pred_embed=True
         )
+    elif log_s2f is None or log_p2f is None:
+        log_s2f, log_p2f = model(batch["ehr_seq"], batch["ehr_mask"])
+
     device = log_s2f.device
     s_tgt = batch["anchor_s2f"].to(device)
     p_tgt = batch["anchor_p2f"].to(device)
@@ -144,25 +151,43 @@ def forward_loss_parts(
     loss_s = masked_ce(log_s2f, s_tgt, s_ok, s2f_class_weight)
     loss_p = masked_ce(log_p2f, p_tgt, p_ok, p2f_class_weight)
 
-    target_embed = _target_anchor_embed(model, batch["anchor_ehr"].to(device))
-    loss_e = loss_anchor_embed(pred_embed, target_embed)
+    loss_e = log_s2f.new_tensor(0.0)
+    target_embed = None
+    if need_embed:
+        if pred_embed is None:
+            _, _, pred_embed = model(batch["ehr_seq"], batch["ehr_mask"], return_pred_embed=True)
+        target_embed = _target_anchor_embed(model, batch["anchor_ehr"].to(device))
+        loss_e = loss_anchor_embed(pred_embed, target_embed)
 
     n_s = int(s_ok.sum())
     n_p = int(p_ok.sum())
-    n_e = int(pred_embed.size(0))
     w_p = p2f_loss_weight
-    w_e = l_embed
-    num = pred_embed.new_tensor(0.0)
+    num = log_s2f.new_tensor(0.0)
     den = 0.0
-    if n_s:
-        num = num + loss_s * n_s
-        den += n_s
-    if n_p:
-        num = num + loss_p * w_p * n_p
-        den += w_p * n_p
-    num = num + loss_e * w_e * n_e
-    den += w_e * n_e
-    total = num / max(den, 1.0)
+
+    if loss_mode == "embed_only":
+        total = loss_e
+    elif loss_mode == "cls_only":
+        if n_s:
+            num = num + loss_s * n_s
+            den += n_s
+        if n_p:
+            num = num + loss_p * w_p * n_p
+            den += w_p * n_p
+        total = num / max(den, 1.0)
+    else:
+        n_e = int(pred_embed.size(0)) if pred_embed is not None else 0
+        w_e = l_embed
+        if n_s:
+            num = num + loss_s * n_s
+            den += n_s
+        if n_p:
+            num = num + loss_p * w_p * n_p
+            den += w_p * n_p
+        if n_e:
+            num = num + loss_e * w_e * n_e
+            den += w_e * n_e
+        total = num / max(den, 1.0)
 
     return total, {
         "loss_s2f": loss_s,
@@ -370,6 +395,7 @@ def eval_loader(
     l_embed: float,
     collect_pred_hist: bool = False,
     *,
+    loss_mode: LossMode = "all",
     p2f_loss_weight: float = 1.0,
     s2f_class_weight: Optional[torch.Tensor] = None,
     p2f_class_weight: Optional[torch.Tensor] = None,
@@ -384,11 +410,16 @@ def eval_loader(
     pred_p = np.zeros(3, dtype=np.int64)
     for batch in loader:
         b = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
-        log_s2f, log_p2f, pred_embed = model(b["ehr_seq"], b["ehr_mask"], return_pred_embed=True)
+        if loss_mode in ("embed_only", "all"):
+            log_s2f, log_p2f, pred_embed = model(b["ehr_seq"], b["ehr_mask"], return_pred_embed=True)
+        else:
+            log_s2f, log_p2f = model(b["ehr_seq"], b["ehr_mask"])
+            pred_embed = None
         loss, parts = forward_loss_parts(
             model,
             b,
             l_embed,
+            loss_mode=loss_mode,
             p2f_loss_weight=p2f_loss_weight,
             s2f_class_weight=s2f_class_weight,
             p2f_class_weight=p2f_class_weight,
@@ -399,9 +430,7 @@ def eval_loader(
         if not torch.isfinite(loss):
             continue
         tot += float(loss)
-        loss_e = parts["loss_embed"]
-        embed_sum += float(loss_e)
-        embed_sum += float(loss_e)
+        embed_sum += float(parts["loss_embed"])
         n_batches += 1
         s_ok = b["anchor_has_s2f"] & (b["anchor_s2f"] >= 0)
         p_ok = b["anchor_has_p2f"] & (b["anchor_p2f"] >= 0)
@@ -437,6 +466,157 @@ def eval_loader(
     return out
 
 
+def run_training_phase(
+    *,
+    phase_name: str,
+    model: EHREncoderTransformerEmbedPred,
+    opt: torch.optim.Optimizer,
+    train_loader: DataLoader,
+    val_loader: DataLoader,
+    device: torch.device,
+    epochs: int,
+    loss_mode: LossMode,
+    best_metric: Literal["embed", "cls"],
+    output_dir: Path,
+    input_dim: int,
+    l_embed: float,
+    grad_clip_norm: float,
+    early_stop_patience: int,
+    early_stop_min_delta: float,
+    loss_kw: dict,
+) -> dict:
+    """Run one training phase; returns summary dict with best checkpoint info."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    best_val = float("inf")
+    best_epoch = -1
+    epochs_no_improve = 0
+    stopped_early = False
+    epoch = -1
+
+    for epoch in range(epochs):
+        model.train()
+        tr = 0.0
+        tr_s = tr_p = tr_e = 0.0
+        n_finite_batches = 0
+        n_skipped_nonfinite = 0
+        n_skipped_bad_grad = 0
+        last_grad_norm = 0.0
+
+        for batch_idx, batch in enumerate(train_loader):
+            b = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
+            loss, parts = forward_loss_parts(
+                model, b, l_embed, loss_mode=loss_mode, **loss_kw
+            )
+            if not torch.isfinite(loss):
+                n_skipped_nonfinite += 1
+                opt.zero_grad(set_to_none=True)
+                continue
+            opt.zero_grad()
+            loss.backward()
+            if grad_clip_norm > 0:
+                last_grad_norm = float(
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip_norm)
+                )
+            else:
+                last_grad_norm = _grad_norm(model)
+            if not np.isfinite(last_grad_norm):
+                n_skipped_bad_grad += 1
+                opt.zero_grad(set_to_none=True)
+                continue
+            opt.step()
+            tr += float(loss)
+            tr_s += float(parts["loss_s2f"])
+            tr_p += float(parts["loss_p2f"])
+            tr_e += float(parts["loss_embed"])
+            n_finite_batches += 1
+
+        tr /= max(n_finite_batches, 1)
+        tr_s /= max(n_finite_batches, 1)
+        tr_p /= max(n_finite_batches, 1)
+        tr_e /= max(n_finite_batches, 1)
+
+        st = eval_loader(
+            model,
+            val_loader,
+            device,
+            l_embed,
+            collect_pred_hist=(loss_mode == "cls_only"),
+            loss_mode=loss_mode,
+            **loss_kw,
+        )
+
+        if loss_mode == "embed_only":
+            metric_val = st["loss_embed"]
+            print(
+                f"[{phase_name}] Epoch {epoch + 1}/{epochs}  train_embed={tr_e:.4f}  "
+                f"val_embed={st['loss_embed']:.6f}  "
+                f"finite_batches={n_finite_batches}  skipped_nonfinite={n_skipped_nonfinite}  "
+                f"skipped_bad_grad={n_skipped_bad_grad}  last_grad_norm={last_grad_norm:.6f}"
+            )
+        else:
+            metric_val = st["loss"]
+            print(
+                f"[{phase_name}] Epoch {epoch + 1}/{epochs}  train_loss={tr:.4f}  "
+                f"(s2f={tr_s:.4f} p2f={tr_p:.4f})  "
+                f"finite_batches={n_finite_batches}  skipped_nonfinite={n_skipped_nonfinite}  "
+                f"skipped_bad_grad={n_skipped_bad_grad}  "
+                f"val_loss={st['loss']:.4f}  val_acc_s2f={st['acc_s2f']:.6f}  "
+                f"val_acc_p2f={st['acc_p2f']:.6f}"
+            )
+            if "pred_hist_s2f" in st:
+                print(
+                    f"  val pred_s2f: {_hist_str(st['pred_hist_s2f'])}  "
+                    f"val pred_p2f: {_hist_str(st['pred_hist_p2f'])}"
+                )
+
+        improved = metric_val < best_val - early_stop_min_delta
+        if improved:
+            best_val = metric_val
+            best_epoch = epoch
+            epochs_no_improve = 0
+            ckpt = {
+                "model": model.state_dict(),
+                "epoch": epoch,
+                "phase": phase_name,
+                "loss_mode": loss_mode,
+                "input_dim": input_dim,
+                "l_embed": l_embed,
+            }
+            if best_metric == "embed":
+                ckpt["val_loss_embed"] = best_val
+            else:
+                ckpt["val_loss"] = best_val
+            torch.save(ckpt, output_dir / "best.pt")
+        else:
+            epochs_no_improve += 1
+
+        if early_stop_patience > 0 and epochs_no_improve >= early_stop_patience:
+            print(
+                f"[{phase_name}] Early stopping at epoch {epoch + 1}/{epochs} "
+                f"(best epoch {best_epoch + 1}, best metric={best_val:.4f})"
+            )
+            stopped_early = True
+            break
+
+    torch.save(model.state_dict(), output_dir / "last.pt")
+    if (output_dir / "best.pt").is_file():
+        ck = torch.load(output_dir / "best.pt", map_location=device, weights_only=False)
+        model.load_state_dict(ck["model"])
+
+    summary = {
+        "phase": phase_name,
+        "loss_mode": loss_mode,
+        "epochs_ran": (epoch + 1) if epoch >= 0 else 0,
+        "best_epoch": best_epoch + 1 if best_epoch >= 0 else None,
+        "stopped_early": stopped_early,
+    }
+    if best_metric == "embed":
+        summary["best_val_embed"] = best_val
+    else:
+        summary["best_val_loss"] = best_val
+    return summary
+
+
 def main(args):
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
@@ -467,9 +647,10 @@ def main(args):
         include_anchor_row=args.include_anchor_row,
     )
     print(
-        f"  Loss: l_embed={args.l_embed}  p2f_weight={args.p2f_loss_weight}  "
-        f"class_weights={args.use_class_weights}  grad_clip={args.grad_clip_norm}  "
-        f"include_anchor_row={args.include_anchor_row}  embed_target=row_encoder_detach  "
+        f"  Schedule: two_phase  pretrain_epochs={args.pretrain_epochs}  "
+        f"finetune_epochs={args.finetune_epochs}  "
+        f"p2f_weight={args.p2f_loss_weight}  class_weights={args.use_class_weights}  "
+        f"grad_clip={args.grad_clip_norm}  include_anchor_row={args.include_anchor_row}  "
         f"preprocess=symile_pct+indicator"
     )
     y = _stratify_labels_from_dataset(full_ds)
@@ -561,151 +742,72 @@ def main(args):
 
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    best_val = float("inf")
-    best_epoch = -1
-    epochs_no_improve = 0
-    stopped_early = False
+    pretrain_dir = out_dir / "pretrain"
+    finetune_dir = out_dir / "finetune"
 
-    param_snap_start = _snapshot_trainable(model)
-    w_before_step = None
+    phase_kw = dict(
+        model=model,
+        opt=opt,
+        train_loader=train_loader,
+        val_loader=val_loader,
+        device=device,
+        input_dim=input_dim,
+        l_embed=args.l_embed,
+        grad_clip_norm=args.grad_clip_norm,
+        loss_kw=loss_kw,
+    )
 
-    for epoch in range(args.epochs):
-        model.train()
-        tr = 0.0
-        tr_s = tr_p = tr_e = 0.0
-        n_tr_batches = 0
-        n_finite_batches = 0
-        n_skipped_nonfinite = 0
-        n_skipped_bad_grad = 0
-        last_grad_norm = 0.0
-        for batch_idx, batch in enumerate(train_loader):
-            b = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
-            loss, parts = forward_loss_parts(model, b, args.l_embed, **loss_kw)
-            if not torch.isfinite(loss):
-                n_skipped_nonfinite += 1
-                if n_skipped_nonfinite <= 3:
-                    pe = parts["pred_embed"]
-                    te = parts["target_embed"]
-                    print(
-                        f"  WARNING: non-finite loss at epoch {epoch + 1} batch {batch_idx} "
-                        f"(|pred_embed|_max={float(pe.abs().max()):.4g} "
-                        f"|target_embed|_max={float(te.abs().max()):.4g}) — skip step"
-                    )
-                opt.zero_grad(set_to_none=True)
-                continue
-            opt.zero_grad()
-            loss.backward()
-            if args.grad_clip_norm > 0:
-                last_grad_norm = float(
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip_norm)
-                )
-            else:
-                last_grad_norm = _grad_norm(model)
-            if not np.isfinite(last_grad_norm):
-                n_skipped_bad_grad += 1
-                opt.zero_grad(set_to_none=True)
-                continue
-            if epoch == 0 and batch_idx == 0:
-                w_before_step = _snapshot_trainable(model)
-            opt.step()
-            if epoch == 0 and batch_idx == 0:
-                step_delta = _param_delta_l2(model, w_before_step)
-                lens = b["ehr_mask"].long().sum(dim=1)
-                s_ok = b["anchor_has_s2f"] & (b["anchor_s2f"] >= 0)
-                p_ok = b["anchor_has_p2f"] & (b["anchor_p2f"] >= 0)
-                pe = parts["pred_embed"]
-                te = parts["target_embed"]
-                print(
-                    "  [train check epoch1 batch0] "
-                    f"loss={float(loss):.4f}  loss_s2f={float(parts['loss_s2f']):.4f}  "
-                    f"loss_p2f={float(parts['loss_p2f']):.4f}  loss_embed={float(parts['loss_embed']):.4f}  "
-                    f"|pred_embed|_max={float(pe.abs().max()):.4f}  |target_embed|_max={float(te.abs().max()):.4f}  "
-                    f"grad_norm={last_grad_norm:.6f}  param_delta_after_1step={step_delta:.8f}"
-                )
-                print(
-                    f"    batch: seq_len min/median/max="
-                    f"{int(lens.min())}/{int(lens.median())}/{int(lens.max())}  "
-                    f"n_s2f={int(s_ok.sum())}  n_p2f={int(p_ok.sum())}"
-                )
-                if s_ok.any():
-                    ps = parts["log_s2f"][s_ok].argmax(1).cpu().numpy()
-                    print(f"    batch pred_s2f (valid only): {_hist_str(np.bincount(ps, minlength=3))}")
-                if p_ok.any():
-                    pp = parts["log_p2f"][p_ok].argmax(1).cpu().numpy()
-                    print(f"    batch pred_p2f (valid only): {_hist_str(np.bincount(pp, minlength=3))}")
-            tr += float(loss)
-            tr_s += float(parts["loss_s2f"])
-            tr_p += float(parts["loss_p2f"])
-            tr_e += float(parts["loss_embed"])
-            n_tr_batches += 1
-            n_finite_batches += 1
-        tr /= max(n_finite_batches, 1)
-        tr_s /= max(n_finite_batches, 1)
-        tr_p /= max(n_finite_batches, 1)
-        tr_e /= max(n_finite_batches, 1)
-        epoch_param_delta = _param_delta_l2(model, param_snap_start) if epoch == 0 else None
-        st = eval_loader(
-            model, val_loader, device, args.l_embed, collect_pred_hist=True, **loss_kw
+    pretrain_summary: dict = {}
+    if not args.skip_pretrain:
+        print(f"\n=== Phase 1: embed-only pretrain ({args.pretrain_epochs} epochs) ===")
+        pretrain_summary = run_training_phase(
+            phase_name="Pretrain",
+            epochs=args.pretrain_epochs,
+            loss_mode="embed_only",
+            best_metric="embed",
+            output_dir=pretrain_dir,
+            early_stop_patience=args.pretrain_early_stop_patience,
+            early_stop_min_delta=args.early_stop_min_delta,
+            **phase_kw,
         )
-        print(
-            f"Epoch {epoch + 1}/{args.epochs}  train_loss={tr:.4f}  "
-            f"(s2f={tr_s:.4f} p2f={tr_p:.4f} embed={tr_e:.4f})  "
-            f"finite_batches={n_finite_batches}  skipped_nonfinite={n_skipped_nonfinite}  "
-            f"skipped_bad_grad={n_skipped_bad_grad}  "
-            f"val_loss={st['loss']:.4f}  "
-            f"val_acc_s2f={st['acc_s2f']:.6f}  val_acc_p2f={st['acc_p2f']:.6f}  "
-            f"val_embed={st['loss_embed']:.6f}"
-        )
-        print(
-            f"  val pred_s2f: {_hist_str(st['pred_hist_s2f'])}  "
-            f"val pred_p2f: {_hist_str(st['pred_hist_p2f'])}"
-        )
-        print(
-            f"  train diagnostics: last_batch_grad_norm={last_grad_norm:.6f}  "
-            f"param_l2={_param_l2(model):.4f}"
-            + (
-                f"  epoch1_param_delta_vs_init={epoch_param_delta:.8f}"
-                if epoch_param_delta is not None
-                else ""
-            )
-        )
-        improved = st["loss"] < best_val - args.early_stop_min_delta
-        if improved:
-            best_val = st["loss"]
-            best_epoch = epoch
-            epochs_no_improve = 0
-            torch.save(
-                {
-                    "model": model.state_dict(),
-                    "epoch": epoch,
-                    "val_loss": best_val,
-                    "input_dim": input_dim,
-                    "l_embed": args.l_embed,
-                },
-                out_dir / "best.pt",
-            )
-        else:
-            epochs_no_improve += 1
-
-        if args.early_stop_patience > 0 and epochs_no_improve >= args.early_stop_patience:
-            print(
-                f"Early stopping at epoch {epoch + 1}/{args.epochs} "
-                f"(best epoch {best_epoch + 1}, best val_loss={best_val:.4f})"
-            )
-            stopped_early = True
-            break
-
-    torch.save(model.state_dict(), out_dir / "last.pt")
-    if (out_dir / "best.pt").is_file():
-        ck = torch.load(out_dir / "best.pt", map_location=device, weights_only=False)
+        pretrain_summary["epochs"] = args.pretrain_epochs
+    else:
+        ck_path = pretrain_dir / "best.pt"
+        if not ck_path.is_file():
+            raise FileNotFoundError(f"--skip_pretrain set but missing {ck_path}")
+        ck = torch.load(ck_path, map_location=device, weights_only=False)
         model.load_state_dict(ck["model"])
-    test_st = eval_loader(model, test_loader, device, args.l_embed, **loss_kw)
+        pretrain_summary = {
+            "skipped": True,
+            "loaded_from": str(ck_path),
+            "best_epoch": ck.get("epoch"),
+        }
+        print(f"\n=== Phase 1 skipped; loaded pretrain checkpoint from {ck_path} ===")
+
+    print(f"\n=== Phase 2: cls-only finetune ({args.finetune_epochs} epochs) ===")
+    finetune_summary = run_training_phase(
+        phase_name="Finetune",
+        epochs=args.finetune_epochs,
+        loss_mode="cls_only",
+        best_metric="cls",
+        output_dir=finetune_dir,
+        early_stop_patience=args.early_stop_patience,
+        early_stop_min_delta=args.early_stop_min_delta,
+        **phase_kw,
+    )
+    finetune_summary["epochs"] = args.finetune_epochs
+
+    test_st = eval_loader(
+        model, test_loader, device, args.l_embed, loss_mode="cls_only", **loss_kw
+    )
     print(
         f"\nTest (summary): loss={test_st['loss']:.4f}  "
-        f"acc_s2f={test_st['acc_s2f']:.4f}  acc_p2f={test_st['acc_p2f']:.4f}  "
-        f"embed={test_st['loss_embed']:.4f}"
+        f"acc_s2f={test_st['acc_s2f']:.4f}  acc_p2f={test_st['acc_p2f']:.4f}"
     )
-    print(f"  (best checkpoint epoch {best_epoch + 1 if best_epoch >= 0 else 'n/a'})")
+    print(
+        f"  (finetune best checkpoint epoch "
+        f"{finetune_summary.get('best_epoch') or 'n/a'})"
+    )
 
     val_reports = evaluate_split_both_heads(
         model, val_loader, device, "Val (best checkpoint)", args.num_classes
@@ -716,6 +818,7 @@ def main(args):
 
     results = {
         "task": "ehrencoder_transformer_embed_pred_s2f_p2f",
+        "training_schedule": "two_phase",
         "lookback_hours": [args.lookback_max_hours, args.lookback_min_hours],
         "include_anchor_row": args.include_anchor_row,
         "anchor_pool": args.anchor_pool,
@@ -724,18 +827,19 @@ def main(args):
         "use_class_weights": args.use_class_weights,
         "grad_clip_norm": args.grad_clip_norm,
         "embed_target": "row_encoder_detach",
-        "best_val_loss": best_val,
-        "best_epoch": best_epoch + 1 if best_epoch >= 0 else None,
-        "stopped_early": stopped_early,
+        "pretrain": pretrain_summary,
+        "finetune": finetune_summary,
         "test_summary": test_st,
         "val": val_reports,
         "test": test_reports,
     }
+    with open(finetune_dir / "results.json", "w") as f:
+        json.dump(results, f, indent=2)
     with open(out_dir / "results.json", "w") as f:
         json.dump(results, f, indent=2)
-    with open(out_dir / "classification_report_val.json", "w") as f:
+    with open(finetune_dir / "classification_report_val.json", "w") as f:
         json.dump(val_reports, f, indent=2)
-    with open(out_dir / "classification_report_test.json", "w") as f:
+    with open(finetune_dir / "classification_report_test.json", "w") as f:
         json.dump(test_reports, f, indent=2)
 
 
@@ -759,7 +863,11 @@ if __name__ == "__main__":
     p.add_argument("--anchor_pool", type=str, default=ANCHOR_POOL, choices=["last", "mean"])
     p.add_argument("--l_embed", type=float, default=L_EMBED)
     p.add_argument("--batch_size", type=int, default=BATCH_SIZE)
-    p.add_argument("--epochs", type=int, default=EPOCHS)
+    p.add_argument("--pretrain_epochs", type=int, default=PRETRAIN_EPOCHS)
+    p.add_argument("--finetune_epochs", type=int, default=FINETUNE_EPOCHS)
+    p.add_argument("--epochs", type=int, default=FINETUNE_EPOCHS)
+    p.add_argument("--pretrain_early_stop_patience", type=int, default=PRETRAIN_EARLY_STOP_PATIENCE)
+    p.add_argument("--skip_pretrain", action="store_true")
     p.add_argument("--lr", type=float, default=LR)
     p.add_argument("--weight_decay", type=float, default=WEIGHT_DECAY)
     p.add_argument("--train_split", type=float, default=TRAIN_SPLIT)
