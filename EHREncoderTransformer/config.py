@@ -38,5 +38,9 @@ OUTPUT_DIR = str(EXP_DIR / "output")
 # Input sequence = lookback [t-24h, t-12h] only (no anchor@t row).
 INCLUDE_ANCHOR_ROW = False
 # Up-weight p2f CE vs s2f (train ~10:1 s2f:p2f anchors per batch).
-P2F_LOSS_WEIGHT = 10.0
-USE_CLASS_WEIGHTS = True
+P2F_LOSS_WEIGHT = 5.0
+USE_CLASS_WEIGHTS = False
+CLASS_WEIGHT_MODE = "sqrt_inverse"  # inverse_freq | sqrt_inverse | none
+LABEL_SMOOTHING = 0.05
+GRAD_CLIP = 1.0
+CHECKPOINT_MIN_ACC_S2F = 0.65

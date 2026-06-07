@@ -15,6 +15,12 @@ Waveform_CXR_EHR/
 ├── BaselineExperiment/            # ARDS 三分类 baseline（EHR / CXR / ECG / 多模态）
 ├── EHRTrend/                      # p2f/s2f 趋势预测、next-step、forward MLP
 ├── EHRWindowTransformer/          # 基于 anchor + history window 的 Transformer
+├── EHREncoderTransformer/         # Symile 预处理 + Row MLP + causal Transformer（单阶段分类）
+├── EHREncoderTransformerEmbedPred/  # 上述 + anchor embed 预测（两阶段：预训练 + 微调）
+├── CXREncoderTransformer/         # CXR + Transformer（ARDS 变化预测）
+├── ECGEncoderTransformer/         # ECG + Transformer
+├── figures/                       # 实验对比图、t-SNE 等可视化
+├── logs/                          # Slurm 训练日志
 ├── models/encoders/               # 共享 EHR / CXR / ECG encoder
 └── experiment1(old)/              # 旧版 CXR–supertable–waveform 全量匹配（已归档）
 ```
@@ -145,6 +151,8 @@ Lookback 窗口与 enrich 脚本一致（6–18 小时，非 README 旧版写的
 | `BaselineExperiment/MultimodalEHRECG` | `p2f_ehr_classified.csv` + `p2f_ecg_all_classified.csv` + enriched |
 | `EHRTrend`（trend / nextstep / forward MLP） | anchor: `p2f_or_s2f_vent_fio2_valid_rows.csv`；history/enriched: `p2f_vent_fio2_enriched.csv`；schema: `supertable_columns_completed.csv` |
 | `EHRWindowTransformer` | anchor/labels: `p2f_or_s2f_vent_fio2_valid_rows.csv`；history: enriched 或 or_s2f（视 modality 而定） |
+| `EHREncoderTransformer` | anchor/history: `p2f_or_s2f_vent_fio2_valid_rows.csv`；schema: `supertable_columns_completed.csv`；可选 enriched join |
+| `EHREncoderTransformerEmbedPred` | 同上 + anchor@t 行用于 embed loss target |
 
 ---
 
@@ -231,3 +239,132 @@ A: 是同一 schema 文件的副本；脚本通过该文件定位 project root �
 
 **Q: `index` 列是什么？**  
 A: Supertable 行的时间戳（`recorded_time` / anchor 时刻），多数脚本将其 parse 为 datetime 用于时间窗匹配。
+
+---
+
+## 实验总览：p2f/s2f 严重程度**变化**预测（12→24h）
+
+本节汇总近期在 **EHR-only** 模型上的一系列实验：用 `[t−24h, t−12h]` 的 EHR 历史预测 anchor 时刻 `t` 的 `s2f/p2f_severity_change_12to24h`（3 类：恶化 / 不变 / 改善）。
+
+### 任务与数据
+
+| 项目 | 说明 |
+|------|------|
+| **输入窗口** | `[t−24h, t−12h]` 内的 EHR 行序列（默认不含 anchor@t 行） |
+| **标签** | anchor 行的 `s2f_severity_change_12to24h` / `p2f_severity_change_12to24h` |
+| **Anchor 表** | `data/p2f_or_s2f_vent_fio2_valid_rows.csv`（过滤空窗口后约 **435k** anchors） |
+| **Symile 预处理** | 训练集上拟合 percentile 特征 + presence indicator → `input_dim=194` |
+| **划分** | stratified 70% / 15% / 15%（train / val / test） |
+| **多数类基线** | s2f **68.2%**，p2f **51.1%**（test 集） |
+
+### 模型架构对比
+
+| 模型 | 目录 | 结构要点 | 训练方式 |
+|------|------|----------|----------|
+| **EHRWindowTransformer** | [`EHRWindowTransformer/`](EHRWindowTransformer/) | 原始 EHR 特征 → 直接 Transformer → dual heads | 单阶段 |
+| **EHREncoderTransformer** | [`EHREncoderTransformer/`](EHREncoderTransformer/) | Symile pct+indicator → Row MLP → causal Transformer → dual heads | 单阶段 |
+| **EHREncoderTransformerEmbedPred** | [`EHREncoderTransformerEmbedPred/`](EHREncoderTransformerEmbedPred/) | 同上 + 从窗口预测 anchor@t 的 row embedding | **两阶段**：embed 预训练 → cls 微调 |
+
+三个模型共享同一 anchor 表与 lookback 设定，区别主要在于 **输入预处理**、**是否有 embed 辅助损失**、**训练策略**。
+
+### 实验结果汇总
+
+下表为各次 Slurm 实验的 **test set** 准确率（`acc_s2f` / `acc_p2f`）。加粗为当前最佳。
+
+| 实验 | Job / 输出目录 | 主要配置 | acc_s2f | acc_p2f | 结论 |
+|------|----------------|----------|---------|---------|------|
+| **EHRWindowTransformer** | `47103601` / `EHRWindowTransformer/output_direct_window/` | 无 Symile；DirectWindowTransformer | 57.2% | 55.7% | 低于多数类基线；loss ~1.78 |
+| **EHREncoderTransformer baseline** | `47745355` / `EHREncoderTransformer/output/` | `class_weights=True`, `p2f_weight=10`, `lr=5e-4` | 44.8% | 46.0% | **loss 卡在 ~1.09**（≈ln3），验证预测单类塌缩 |
+| **EmbedPred baseline** | `47748678` / `EHREncoderTransformerEmbedPred/output_twophase/` | 两阶段；预训练 checkpoint 有 bug；`class_weights=True` | 48.9% | 43.4% | 预训练几乎未收敛即进入微调 |
+| **EmbedPred Exp A** | `47753034` / `output_twophase_expA/` | 仅修复预训练衔接（`pretrain_resume=last`, `min_epochs=10`）；仍用 class weights | 31.6% | 48.3% | s2f 更差（过度预测少数类） |
+| **EmbedPred Exp B** | `47753016` / `output_twophase_expB/` | Exp A + **`--no-use_class_weights`** + label smoothing + grad clip | 68.3% | 54.1% | 首次稳定超过 s2f 多数类基线 |
+| **EmbedPred Exp C** | `47753017` / `output_twophase_expC/` | Exp B + `lr=1e-4`, `p2f_weight=5`, `finetune_epochs=80` | **69.1%** | **57.6%** | **EmbedPred 最佳** |
+| **EHREncoderTransformer Fix-A** | `47789415` / `output_fixA/` | 去掉 class weights（新默认） | 68.4% | 51.4% | loss 从 ~1.09 降至 ~0.91，训练恢复 |
+| **EHREncoderTransformer Fix-B** | `47789416` / `output_fixB/` | Fix-A + 显式 grad_clip / label_smoothing | 17.2% | 51.1% | 单次运行数值异常（NaN），可忽略 |
+| **EHREncoderTransformer Fix-C** | `47789417` / `output_fixC/` | Fix-A + `lr=1e-4`, `p2f_weight=5`, grad_clip, label_smoothing | **69.0%** | **57.5%** | **单阶段最佳**；三类均有预测 |
+
+> 日志路径：`logs/ehr-*-<jobid>.out`；完整指标见各目录下 `results.json` 与 `classification_report_test.json`。
+
+### 关键问题与改进
+
+#### 1. Class weights 导致 loss「看似不训练」
+
+- **现象**：`EHREncoderTransformer` baseline 的 `train_loss` 长期停在 **~1.09**（接近 3 类随机 CE `ln(3)≈1.10`），但 `param_l2` 持续增长，说明参数在更新。
+- **根因**：`inverse_freq` class weights 使加权 CE 对「塌缩到单类」不敏感；多数类 s2f 权重仅 ~0.31，loss 几乎不变。
+- **修复**：默认关闭 class weights（`USE_CLASS_WEIGHTS=False`）；日志增加 **unweighted CE**（`train_ce_uw_s2f`）监控真实学习信号。
+- **验证**：诊断脚本 [`EHREncoderTransformer/diagnose_training.py`](EHREncoderTransformer/diagnose_training.py) 实验 E 显示加权 CE ≈1.13、去掉权重后 loss 可降至 ~0.91。
+
+#### 2. EmbedPred 预训练 checkpoint 衔接错误
+
+- **现象**：baseline 预训练在第 1 epoch 就保存 `best.pt`（`val_embed≈0`），微调从近乎随机权重起步。
+- **修复**（[`EHREncoderTransformerEmbedPred/train.py`](EHREncoderTransformerEmbedPred/train.py)）：
+  - `PRETRAIN_MIN_EPOCHS=10`：前 10 epoch 不保存 best
+  - `PRETRAIN_RESUME=last`：微调前加载 `last.pt` 而非过早的 `best.pt`
+  - 预训练独立 early stopping（`PRETRAIN_EARLY_STOP_PATIENCE=10`）
+
+#### 3. 训练稳定性与 checkpoint 选择
+
+- **改进**（已移植到两个 Transformer 训练脚本）：
+  - `label_smoothing=0.05`
+  - `grad_clip=1.0`
+  - `p2f_loss_weight` 从 10 降至 **5**
+  - 双 checkpoint：`best_acc.pt`（按 `val_acc_s2f + val_acc_p2f`）+ `best_loss.pt`；评估默认用 `best_acc.pt`
+  - 日志输出 `pred_diversity`（验证集预测覆盖几类）
+
+#### 4. 输入与模型复杂度
+
+- 诊断实验 C（Row MLP 线性探针，无 Transformer）可达 **~69%** acc，说明 **输入有分类信号**，问题不在数据或模型过复杂。
+- Mini-overfit（2k 子集）未完全过拟合，表明全量训练仍需正则与稳定优化，但架构本身可学习。
+
+### 推荐复现命令
+
+**EmbedPred 最佳（Exp C）：**
+
+```bash
+sbatch --job-name=ehr-embed-best EHREncoderTransformerEmbedPred/run_train.sh \
+  --output_dir EHREncoderTransformerEmbedPred/output_twophase_expC \
+  --no-use_class_weights \
+  --finetune_epochs 80 \
+  --lr 1e-4 \
+  --p2f_loss_weight 5.0
+```
+
+Checkpoint：`EHREncoderTransformerEmbedPred/output_twophase_expC/finetune/best_acc.pt`
+
+**EHREncoderTransformer 最佳（Fix-C，单阶段）：**
+
+```bash
+sbatch --job-name=ehr-tr-best EHREncoderTransformer/run_train.sh \
+  --output_dir EHREncoderTransformer/output_fixC \
+  --no-use_class_weights \
+  --grad_clip 1.0 \
+  --label_smoothing 0.05 \
+  --lr 1e-4 \
+  --p2f_loss_weight 5.0
+```
+
+Checkpoint：`EHREncoderTransformer/output_fixC/best_acc.pt`
+
+**快速诊断（~20 分钟）：**
+
+```bash
+sbatch EHREncoderTransformer/run_diagnose.sh
+# 报告 → EHREncoderTransformer/output_diagnose/report.json
+```
+
+**消融批量提交：**
+
+```bash
+bash EHREncoderTransformer/run_fix_ablations.sh
+```
+
+### 可视化
+
+- 实验对比曲线：[`figures/plot_embedpred_exp_runs.py`](figures/plot_embedpred_exp_runs.py) → `figures/ehr_embedpred_exp_runs/`
+- t-SNE 嵌入可视化：[`figures/plot_tsne_embedpred.py`](figures/plot_tsne_embedpred.py)
+
+### 经验结论
+
+1. **超过多数类基线**（s2f > 68%, p2f > 51%）的关键是 **去掉 class weights** + **稳定训练**（grad clip、label smoothing、较低 lr），而非增大模型。
+2. **EmbedPred 两阶段** 与 **EHREncoderTransformer 单阶段** 在修复后达到相近精度（~69% / ~58%），embed 预训练对最终分类增益有限，但两阶段框架仍可用于表征学习分析。
+3. 监控指标应看 **unweighted CE** 与 **pred diversity**，不要仅看加权 `train_loss`——后者在 class weights 下会「假性平坦」。

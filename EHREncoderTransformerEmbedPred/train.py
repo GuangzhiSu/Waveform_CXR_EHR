@@ -32,16 +32,32 @@ def masked_ce(
     y: torch.Tensor,
     valid: torch.Tensor,
     class_weight: Optional[torch.Tensor] = None,
+    label_smoothing: float = 0.0,
 ) -> torch.Tensor:
     if not valid.any():
         return logits.new_tensor(0.0)
-    return F.cross_entropy(logits[valid], y[valid], weight=class_weight)
+    return F.cross_entropy(
+        logits[valid],
+        y[valid],
+        weight=class_weight,
+        label_smoothing=label_smoothing,
+    )
 
 
-def _inverse_freq_weights(counts: np.ndarray, num_classes: int, device: torch.device) -> torch.Tensor:
+def _class_weights_from_counts(
+    counts: np.ndarray,
+    num_classes: int,
+    device: torch.device,
+    mode: str,
+) -> Optional[torch.Tensor]:
+    if mode == "none":
+        return None
     c = np.bincount(counts, minlength=num_classes).astype(np.float64)
     c = np.maximum(c, 1.0)
-    w = 1.0 / c
+    if mode == "sqrt_inverse":
+        w = 1.0 / np.sqrt(c)
+    else:
+        w = 1.0 / c
     w = w * (num_classes / w.sum())
     return torch.tensor(w, dtype=torch.float32, device=device)
 
@@ -53,7 +69,8 @@ def _head_class_weights(
     cls_attr: str,
     num_classes: int,
     device: torch.device,
-) -> torch.Tensor:
+    mode: str = "inverse_freq",
+) -> Optional[torch.Tensor]:
     has = getattr(ds, has_attr)
     cls = getattr(ds, cls_attr)
     labels = []
@@ -61,8 +78,8 @@ def _head_class_weights(
         if has[i] and cls[i] >= 0:
             labels.append(int(cls[i]))
     if not labels:
-        return torch.ones(num_classes, device=device)
-    return _inverse_freq_weights(np.asarray(labels, dtype=np.int64), num_classes, device)
+        return None if mode == "none" else torch.ones(num_classes, device=device)
+    return _class_weights_from_counts(np.asarray(labels, dtype=np.int64), num_classes, device, mode)
 
 
 def loss_anchor_embed(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
@@ -131,6 +148,7 @@ def forward_loss_parts(
     p2f_loss_weight: float = 1.0,
     s2f_class_weight: Optional[torch.Tensor] = None,
     p2f_class_weight: Optional[torch.Tensor] = None,
+    label_smoothing: float = 0.0,
     log_s2f: Optional[torch.Tensor] = None,
     log_p2f: Optional[torch.Tensor] = None,
     pred_embed: Optional[torch.Tensor] = None,
@@ -148,8 +166,8 @@ def forward_loss_parts(
     p_tgt = batch["anchor_p2f"].to(device)
     s_ok = batch["anchor_has_s2f"].to(device) & (s_tgt >= 0)
     p_ok = batch["anchor_has_p2f"].to(device) & (p_tgt >= 0)
-    loss_s = masked_ce(log_s2f, s_tgt, s_ok, s2f_class_weight)
-    loss_p = masked_ce(log_p2f, p_tgt, p_ok, p2f_class_weight)
+    loss_s = masked_ce(log_s2f, s_tgt, s_ok, s2f_class_weight, label_smoothing=label_smoothing)
+    loss_p = masked_ce(log_p2f, p_tgt, p_ok, p2f_class_weight, label_smoothing=label_smoothing)
 
     loss_e = log_s2f.new_tensor(0.0)
     target_embed = None
@@ -399,6 +417,7 @@ def eval_loader(
     p2f_loss_weight: float = 1.0,
     s2f_class_weight: Optional[torch.Tensor] = None,
     p2f_class_weight: Optional[torch.Tensor] = None,
+    label_smoothing: float = 0.0,
 ) -> dict:
     model.eval()
     tot = 0.0
@@ -466,6 +485,15 @@ def eval_loader(
     return out
 
 
+def _load_checkpoint_weights(model: EHREncoderTransformerEmbedPred, path: Path, device: torch.device) -> dict:
+    ck = torch.load(path, map_location=device, weights_only=False)
+    if isinstance(ck, dict) and "model" in ck:
+        model.load_state_dict(ck["model"])
+        return ck
+    model.load_state_dict(ck)
+    return {"model": ck}
+
+
 def run_training_phase(
     *,
     phase_name: str,
@@ -484,11 +512,16 @@ def run_training_phase(
     early_stop_patience: int,
     early_stop_min_delta: float,
     loss_kw: dict,
+    min_epochs_before_best: int = 0,
+    checkpoint_at_end: Literal["last", "best", "best_acc", "none"] = "best",
+    checkpoint_min_acc_s2f: float = 0.0,
 ) -> dict:
     """Run one training phase; returns summary dict with best checkpoint info."""
     output_dir.mkdir(parents=True, exist_ok=True)
     best_val = float("inf")
     best_epoch = -1
+    best_acc_score = -1.0
+    best_acc_epoch = -1
     epochs_no_improve = 0
     stopped_early = False
     epoch = -1
@@ -572,23 +605,43 @@ def run_training_phase(
         improved = metric_val < best_val - early_stop_min_delta
         if improved:
             best_val = metric_val
-            best_epoch = epoch
             epochs_no_improve = 0
-            ckpt = {
-                "model": model.state_dict(),
-                "epoch": epoch,
-                "phase": phase_name,
-                "loss_mode": loss_mode,
-                "input_dim": input_dim,
-                "l_embed": l_embed,
-            }
-            if best_metric == "embed":
-                ckpt["val_loss_embed"] = best_val
-            else:
-                ckpt["val_loss"] = best_val
-            torch.save(ckpt, output_dir / "best.pt")
+            if (epoch + 1) >= min_epochs_before_best:
+                best_epoch = epoch
+                ckpt = {
+                    "model": model.state_dict(),
+                    "epoch": epoch,
+                    "phase": phase_name,
+                    "loss_mode": loss_mode,
+                    "input_dim": input_dim,
+                    "l_embed": l_embed,
+                }
+                if best_metric == "embed":
+                    ckpt["val_loss_embed"] = best_val
+                    torch.save(ckpt, output_dir / "best.pt")
+                else:
+                    ckpt["val_loss"] = best_val
+                    torch.save(ckpt, output_dir / "best_loss.pt")
         else:
             epochs_no_improve += 1
+
+        if loss_mode != "embed_only":
+            acc_score = st["acc_s2f"] + st["acc_p2f"]
+            if st["acc_s2f"] >= checkpoint_min_acc_s2f and acc_score > best_acc_score:
+                best_acc_score = acc_score
+                best_acc_epoch = epoch
+                acc_ckpt = {
+                    "model": model.state_dict(),
+                    "epoch": epoch,
+                    "phase": phase_name,
+                    "loss_mode": loss_mode,
+                    "input_dim": input_dim,
+                    "l_embed": l_embed,
+                    "val_acc_s2f": st["acc_s2f"],
+                    "val_acc_p2f": st["acc_p2f"],
+                    "val_acc_score": acc_score,
+                }
+                torch.save(acc_ckpt, output_dir / "best_acc.pt")
 
         if early_stop_patience > 0 and epochs_no_improve >= early_stop_patience:
             print(
@@ -598,22 +651,31 @@ def run_training_phase(
             stopped_early = True
             break
 
-    torch.save(model.state_dict(), output_dir / "last.pt")
-    if (output_dir / "best.pt").is_file():
-        ck = torch.load(output_dir / "best.pt", map_location=device, weights_only=False)
-        model.load_state_dict(ck["model"])
+    torch.save({"model": model.state_dict(), "epoch": epoch}, output_dir / "last.pt")
+    if checkpoint_at_end == "last" and (output_dir / "last.pt").is_file():
+        _load_checkpoint_weights(model, output_dir / "last.pt", device)
+    elif checkpoint_at_end == "best_acc" and (output_dir / "best_acc.pt").is_file():
+        _load_checkpoint_weights(model, output_dir / "best_acc.pt", device)
+    elif checkpoint_at_end == "best":
+        ck_path = output_dir / ("best.pt" if best_metric == "embed" else "best_loss.pt")
+        if ck_path.is_file():
+            _load_checkpoint_weights(model, ck_path, device)
+    # checkpoint_at_end == "none": keep final epoch weights
 
     summary = {
         "phase": phase_name,
         "loss_mode": loss_mode,
         "epochs_ran": (epoch + 1) if epoch >= 0 else 0,
         "best_epoch": best_epoch + 1 if best_epoch >= 0 else None,
+        "best_acc_epoch": best_acc_epoch + 1 if best_acc_epoch >= 0 else None,
         "stopped_early": stopped_early,
+        "min_epochs_before_best": min_epochs_before_best,
     }
     if best_metric == "embed":
         summary["best_val_embed"] = best_val
     else:
         summary["best_val_loss"] = best_val
+        summary["best_val_acc_score"] = best_acc_score if best_acc_epoch >= 0 else None
     return summary
 
 
@@ -646,10 +708,13 @@ def main(args):
         lookback_max_hours=args.lookback_max_hours,
         include_anchor_row=args.include_anchor_row,
     )
+    cw_mode = "none" if not args.use_class_weights else args.class_weight_mode
     print(
         f"  Schedule: two_phase  pretrain_epochs={args.pretrain_epochs}  "
-        f"finetune_epochs={args.finetune_epochs}  "
+        f"finetune_epochs={args.finetune_epochs}  finetune_loss={args.finetune_loss_mode}  "
+        f"pretrain_resume={args.pretrain_resume}  pretrain_min_epochs={args.pretrain_min_epochs}  "
         f"p2f_weight={args.p2f_loss_weight}  class_weights={args.use_class_weights}  "
+        f"class_weight_mode={cw_mode}  label_smoothing={args.label_smoothing}  "
         f"grad_clip={args.grad_clip_norm}  include_anchor_row={args.include_anchor_row}  "
         f"preprocess=symile_pct+indicator"
     )
@@ -723,21 +788,26 @@ def main(args):
     _anchor_label_stats(base, idx_val, "val")
     _anchor_label_stats(base, idx_train, "train")
 
-    s2f_w = p2f_w = None
-    if args.use_class_weights:
-        s2f_w = _head_class_weights(
-            base, idx_train, "anchor_has_s2f", "anchor_s2f_cls", args.num_classes, device
-        )
-        p2f_w = _head_class_weights(
-            base, idx_train, "anchor_has_p2f", "anchor_p2f_cls", args.num_classes, device
-        )
+    s2f_w = _head_class_weights(
+        base, idx_train, "anchor_has_s2f", "anchor_s2f_cls", args.num_classes, device, mode=cw_mode
+    )
+    p2f_w = _head_class_weights(
+        base, idx_train, "anchor_has_p2f", "anchor_p2f_cls", args.num_classes, device, mode=cw_mode
+    )
+    if s2f_w is not None:
         print(f"  s2f class weights: {s2f_w.detach().cpu().tolist()}")
+    else:
+        print("  s2f class weights: none")
+    if p2f_w is not None:
         print(f"  p2f class weights: {p2f_w.detach().cpu().tolist()}")
+    else:
+        print("  p2f class weights: none")
 
     loss_kw = dict(
         p2f_loss_weight=args.p2f_loss_weight,
         s2f_class_weight=s2f_w,
         p2f_class_weight=p2f_w,
+        label_smoothing=args.label_smoothing,
     )
 
     out_dir = Path(args.output_dir)
@@ -760,6 +830,7 @@ def main(args):
     pretrain_summary: dict = {}
     if not args.skip_pretrain:
         print(f"\n=== Phase 1: embed-only pretrain ({args.pretrain_epochs} epochs) ===")
+        pretrain_phase_kw = {**phase_kw, "l_embed": args.l_embed}
         pretrain_summary = run_training_phase(
             phase_name="Pretrain",
             epochs=args.pretrain_epochs,
@@ -768,15 +839,30 @@ def main(args):
             output_dir=pretrain_dir,
             early_stop_patience=args.pretrain_early_stop_patience,
             early_stop_min_delta=args.early_stop_min_delta,
-            **phase_kw,
+            min_epochs_before_best=args.pretrain_min_epochs,
+            checkpoint_at_end="none",
+            **pretrain_phase_kw,
         )
         pretrain_summary["epochs"] = args.pretrain_epochs
+        pretrain_summary["pretrain_resume"] = args.pretrain_resume
+        if args.pretrain_resume == "last":
+            resume_path = pretrain_dir / "last.pt"
+        else:
+            resume_path = pretrain_dir / "best.pt"
+            if not resume_path.is_file():
+                print("  WARNING: pretrain best.pt missing; falling back to last.pt")
+                resume_path = pretrain_dir / "last.pt"
+        if not resume_path.is_file():
+            raise FileNotFoundError(f"Pretrain resume checkpoint missing: {resume_path}")
+        ck = _load_checkpoint_weights(model, resume_path, device)
+        pre_ep = ck.get("epoch")
+        pre_ep_s = (int(pre_ep) + 1) if isinstance(pre_ep, int) else "n/a"
+        print(f"  Loaded pretrain weights from {resume_path.name} (epoch {pre_ep_s})")
     else:
         ck_path = pretrain_dir / "best.pt"
         if not ck_path.is_file():
             raise FileNotFoundError(f"--skip_pretrain set but missing {ck_path}")
-        ck = torch.load(ck_path, map_location=device, weights_only=False)
-        model.load_state_dict(ck["model"])
+        ck = _load_checkpoint_weights(model, ck_path, device)
         pretrain_summary = {
             "skipped": True,
             "loaded_from": str(ck_path),
@@ -784,30 +870,46 @@ def main(args):
         }
         print(f"\n=== Phase 1 skipped; loaded pretrain checkpoint from {ck_path} ===")
 
-    print(f"\n=== Phase 2: cls-only finetune ({args.finetune_epochs} epochs) ===")
+    finetune_loss_mode: LossMode = (
+        "all" if args.finetune_loss_mode == "all" else "cls_only"
+    )
+    finetune_l_embed = args.finetune_l_embed if finetune_loss_mode == "all" else 0.0
+    finetune_phase_kw = {**phase_kw, "l_embed": finetune_l_embed}
+    phase2_label = "cls+embed finetune" if finetune_loss_mode == "all" else "cls-only finetune"
+    print(f"\n=== Phase 2: {phase2_label} ({args.finetune_epochs} epochs) ===")
     finetune_summary = run_training_phase(
         phase_name="Finetune",
         epochs=args.finetune_epochs,
-        loss_mode="cls_only",
+        loss_mode=finetune_loss_mode,
         best_metric="cls",
         output_dir=finetune_dir,
         early_stop_patience=args.early_stop_patience,
         early_stop_min_delta=args.early_stop_min_delta,
-        **phase_kw,
+        checkpoint_at_end="best_acc",
+        checkpoint_min_acc_s2f=args.checkpoint_min_acc_s2f,
+        **finetune_phase_kw,
     )
     finetune_summary["epochs"] = args.finetune_epochs
+    finetune_summary["finetune_loss_mode"] = finetune_loss_mode
+    finetune_summary["finetune_l_embed"] = finetune_l_embed
+    if not (finetune_dir / "best_acc.pt").is_file() and (finetune_dir / "best_loss.pt").is_file():
+        print("  No best_acc.pt found; falling back to best_loss.pt for evaluation")
+        _load_checkpoint_weights(model, finetune_dir / "best_loss.pt", device)
 
     test_st = eval_loader(
-        model, test_loader, device, args.l_embed, loss_mode="cls_only", **loss_kw
+        model,
+        test_loader,
+        device,
+        finetune_l_embed,
+        loss_mode=finetune_loss_mode,
+        **loss_kw,
     )
+    ckpt_epoch = finetune_summary.get("best_acc_epoch") or finetune_summary.get("best_epoch")
     print(
         f"\nTest (summary): loss={test_st['loss']:.4f}  "
         f"acc_s2f={test_st['acc_s2f']:.4f}  acc_p2f={test_st['acc_p2f']:.4f}"
     )
-    print(
-        f"  (finetune best checkpoint epoch "
-        f"{finetune_summary.get('best_epoch') or 'n/a'})"
-    )
+    print(f"  (finetune checkpoint epoch {ckpt_epoch or 'n/a'})")
 
     val_reports = evaluate_split_both_heads(
         model, val_loader, device, "Val (best checkpoint)", args.num_classes
@@ -825,6 +927,13 @@ def main(args):
         "l_embed": args.l_embed,
         "p2f_loss_weight": args.p2f_loss_weight,
         "use_class_weights": args.use_class_weights,
+        "class_weight_mode": cw_mode,
+        "label_smoothing": args.label_smoothing,
+        "pretrain_resume": args.pretrain_resume,
+        "pretrain_min_epochs": args.pretrain_min_epochs,
+        "finetune_loss_mode": finetune_loss_mode,
+        "finetune_l_embed": finetune_l_embed,
+        "checkpoint_min_acc_s2f": args.checkpoint_min_acc_s2f,
         "grad_clip_norm": args.grad_clip_norm,
         "embed_target": "row_encoder_detach",
         "pretrain": pretrain_summary,
@@ -867,6 +976,28 @@ if __name__ == "__main__":
     p.add_argument("--finetune_epochs", type=int, default=FINETUNE_EPOCHS)
     p.add_argument("--epochs", type=int, default=FINETUNE_EPOCHS)
     p.add_argument("--pretrain_early_stop_patience", type=int, default=PRETRAIN_EARLY_STOP_PATIENCE)
+    p.add_argument("--pretrain_min_epochs", type=int, default=PRETRAIN_MIN_EPOCHS)
+    p.add_argument(
+        "--pretrain_resume",
+        type=str,
+        default=PRETRAIN_RESUME,
+        choices=["last", "best"],
+    )
+    p.add_argument(
+        "--finetune_loss_mode",
+        type=str,
+        default=FINETUNE_LOSS_MODE,
+        choices=["cls_only", "all"],
+    )
+    p.add_argument("--finetune_l_embed", type=float, default=FINETUNE_L_EMBED)
+    p.add_argument("--checkpoint_min_acc_s2f", type=float, default=CHECKPOINT_MIN_ACC_S2F)
+    p.add_argument(
+        "--class_weight_mode",
+        type=str,
+        default=CLASS_WEIGHT_MODE,
+        choices=["inverse_freq", "sqrt_inverse", "none"],
+    )
+    p.add_argument("--label_smoothing", type=float, default=LABEL_SMOOTHING)
     p.add_argument("--skip_pretrain", action="store_true")
     p.add_argument("--lr", type=float, default=LR)
     p.add_argument("--weight_decay", type=float, default=WEIGHT_DECAY)

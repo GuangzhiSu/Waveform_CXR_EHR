@@ -23,13 +23,17 @@ MAX_SEQ_LENGTH = 512
 
 # Third loss: predict t embedding from [t-24h, t-12h] window vs row_encoder(t) snapshot.
 L_EMBED = 0.25
+FINETUNE_L_EMBED = 0.05
 
 BATCH_SIZE = 64
-# Two-phase schedule: embed-only pretrain, then cls-only finetune.
+# Two-phase schedule: embed-only pretrain, then cls finetune (optionally joint cls+embed).
 PRETRAIN_EPOCHS = 100
 FINETUNE_EPOCHS = 50
 EPOCHS = FINETUNE_EPOCHS  # backward-compatible alias
-PRETRAIN_EARLY_STOP_PATIENCE = 0
+PRETRAIN_MIN_EPOCHS = 10
+PRETRAIN_EARLY_STOP_PATIENCE = 10
+PRETRAIN_RESUME = "last"  # "last" or "best" — weights loaded before finetune
+FINETUNE_LOSS_MODE = "cls_only"  # "cls_only" or "all"
 LR = 5e-4
 WEIGHT_DECAY = 1e-3
 TRAIN_SPLIT = 0.7
@@ -46,4 +50,9 @@ OUTPUT_DIR = str(EXP_DIR / "output_twophase")
 INCLUDE_ANCHOR_ROW = False
 P2F_LOSS_WEIGHT = 10.0
 USE_CLASS_WEIGHTS = True
+CLASS_WEIGHT_MODE = "inverse_freq"  # inverse_freq | sqrt_inverse | none
+LABEL_SMOOTHING = 0.05
 GRAD_CLIP_NORM = 1.0
+
+# Finetune checkpoint: save best_acc.pt when val_acc_s2f >= this and acc_s2f+acc_p2f improves.
+CHECKPOINT_MIN_ACC_S2F = 0.65

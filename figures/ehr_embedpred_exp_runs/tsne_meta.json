@@ -1,0 +1,34 @@
+{
+  "ckpt": "/work/gs285/Waveform_CXR_EHR/EHREncoderTransformerEmbedPred/output_twophase_expC/finetune/best_acc.pt",
+  "seed": 42,
+  "tsne_n_s2f": 3000,
+  "tsne_n_p2f": 3000,
+  "s2f_expC": {
+    "n": 3000,
+    "perplexity": 30.0
+  },
+  "p2f_expC": {
+    "n": 3000,
+    "perplexity": 30.0
+  },
+  "compare_s2f": {
+    "Baseline": {
+      "n": 3000,
+      "perplexity": 30.0
+    },
+    "Exp C": {
+      "n": 3000,
+      "perplexity": 30.0
+    }
+  },
+  "compare_p2f": {
+    "Baseline": {
+      "n": 3000,
+      "perplexity": 30.0
+    },
+    "Exp C": {
+      "n": 3000,
+      "perplexity": 30.0
+    }
+  }
+}
