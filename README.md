@@ -282,8 +282,31 @@ A: Supertable 行的时间戳（`recorded_time` / anchor 时刻），多数脚�
 | **EHREncoderTransformer Fix-A** | `47789415` / `output_fixA/` | 去掉 class weights（新默认） | 68.4% | 51.4% | loss 从 ~1.09 降至 ~0.91，训练恢复 |
 | **EHREncoderTransformer Fix-B** | `47789416` / `output_fixB/` | Fix-A + 显式 grad_clip / label_smoothing | 17.2% | 51.1% | 单次运行数值异常（NaN），可忽略 |
 | **EHREncoderTransformer Fix-C** | `47789417` / `output_fixC/` | Fix-A + `lr=1e-4`, `p2f_weight=5`, grad_clip, label_smoothing | **69.0%** | **57.5%** | **单阶段最佳**；三类均有预测 |
+| **CXREncoderTransformer** | `47646619` / `output/` | `class_weights=True`；47646619 为 `max_samples=5000` 子集 | 54.8% / **63.1%** | ~52% | s2f 低于多数类（65.9%）；loss 未充分下降 |
+| **ECGEncoderTransformer** | — / `output/` | `class_weights=True`；`label_smoothing=0.05` | **27.7%** | 52.5% | s2f 塌缩；典型 class weights 问题 |
+
+**进行中 follow-up**（`bash figures/run_followup_experiments.sh` 批量提交）：
+
+| Job | Slurm ID | 输出目录 | 改动要点 |
+|-----|----------|----------|----------|
+| EHR TR Fix-D | `47837615` | `output_fixD/` | Fix-C + `epochs=80`, `early_stop_patience=20` |
+| EHR TR Fix-E | `47837616` | `output_fixE/` | Fix-C + `lr=5e-5`, 更长训练 |
+| EmbedPred Exp-D | `47837617` | `output_twophase_expD/` | Exp C + `finetune_epochs=100` |
+| EmbedPred Exp-E | `47837618` | `output_twophase_expE/` | `--skip_pretrain` + Exp C 微调超参 |
+| Window-Fix | `47837619` | `output_direct_window_fix/` | `lr=1e-4`, `epochs=80` |
+| CXR-Fix-A | `47837620` | `CXREncoderTransformer/output_fixA/` | 无 class weights + label smoothing（5k 子集） |
+| CXR-Fix-B | `47837621` | `CXREncoderTransformer/output_fixB/` | Fix-A + 全量数据 |
+| ECG-Fix-A | `47837622` | `ECGEncoderTransformer/output_fixA/` | `--no-use_class_weights` |
+| ECG-Fix-B | `47837623` | `ECGEncoderTransformer/output_fixB/` | Fix-A + `p2f_weight=5`, `early_stop_patience=20` |
 
 > 日志路径：`logs/ehr-*-<jobid>.out`；完整指标见各目录下 `results.json` 与 `classification_report_test.json`。
+>
+> **自动刷新**（等全部 follow-up job 结束后重跑绘图并打印指标摘要）：
+> ```bash
+> bash figures/refresh_after_jobs.sh          # 前台等待
+> # 或查看后台任务日志：tail -f logs/refresh-after-jobs.log
+> python figures/summarize_followup_results.py  # 仅查看当前 results.json 状态
+> ```
 
 ### 关键问题与改进
 
@@ -360,8 +383,26 @@ bash EHREncoderTransformer/run_fix_ablations.sh
 
 ### 可视化
 
-- 实验对比曲线：[`figures/plot_embedpred_exp_runs.py`](figures/plot_embedpred_exp_runs.py) → `figures/ehr_embedpred_exp_runs/`
-- t-SNE 嵌入可视化：[`figures/plot_tsne_embedpred.py`](figures/plot_tsne_embedpred.py)
+一键生成全部 loss/acc 图（login node，无需 GPU；进行中 follow-up 会随 log 自动纳入，如 `training_curves_fixD.png`）：
+
+```bash
+bash figures/run_all_plots.sh
+```
+
+| 子目录 | 脚本 | 内容 |
+|--------|------|------|
+| [`figures/ehr_embedpred_exp_runs/`](figures/ehr_embedpred_exp_runs/) | [`plot_embedpred_exp_runs.py`](figures/plot_embedpred_exp_runs.py) | EmbedPred baseline / Exp A–C 曲线、t-SNE、test acc 对比 |
+| [`figures/ehr_symile_47745355_47745356_47748678/`](figures/ehr_symile_47745355_47745356_47748678/) | [`plot_symile_runs.py`](figures/plot_symile_runs.py) | symile-tr / embed / 2ph 对比 |
+| [`figures/ehr_tr_fix_runs/`](figures/ehr_tr_fix_runs/) | [`plot_ehr_tr_fix_runs.py`](figures/plot_ehr_tr_fix_runs.py) | EHREncoderTransformer baseline / Fix-A/C/D/E + t-SNE |
+| [`figures/ehr_window_transformer/`](figures/ehr_window_transformer/) | [`plot_ehr_window_tr.py`](figures/plot_ehr_window_tr.py) | EHRWindowTransformer `47103601` |
+| [`figures/cxr_ecg_enc_tr/`](figures/cxr_ecg_enc_tr/) | [`plot_cxr_ecg_runs.py`](figures/plot_cxr_ecg_runs.py) | CXR `47646619` + CXR/ECG `output/results.json` |
+
+t-SNE（GPU，~30 min）：
+
+```bash
+sbatch figures/run_tsne_embedpred.sh    # EmbedPred Exp C vs baseline → ehr_embedpred_exp_runs/
+sbatch figures/run_tsne_ehr_tr.sh       # EHREncoderTransformer Fix-C vs baseline → ehr_tr_fix_runs/
+```
 
 ### 经验结论
 

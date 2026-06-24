@@ -1,0 +1,17 @@
+{
+  "task": "ehr_window_direct_transformer_anchor_s2f_p2f",
+  "lookback_hours": [
+    24,
+    12
+  ],
+  "best_val_loss": 1.7096675448156127,
+  "best_epoch": 36,
+  "stopped_early": true,
+  "test": {
+    "loss": 1.7055455867153657,
+    "ce_s2f": 0.8016641189314125,
+    "ce_p2f": 0.9047676284961841,
+    "acc_s2f": 0.6882297884093106,
+    "acc_p2f": 0.5550765571577226
+  }
+}

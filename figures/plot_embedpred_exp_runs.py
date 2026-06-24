@@ -68,6 +68,33 @@ RUNS = [
     },
 ]
 
+_FOLLOWUP_SPECS = [
+    ("ehr-embed-expD-*.out", "expD", "output_twophase_expD", "Exp-D", "#9467bd"),
+    ("ehr-embed-expE-*.out", "expE", "output_twophase_expE", "Exp-E", "#8c564b"),
+]
+
+
+def _discover_followup_runs() -> list[dict]:
+    extra = []
+    for pattern, key, out_sub, short, color in _FOLLOWUP_SPECS:
+        matches = sorted(LOGS.glob(pattern))
+        if not matches:
+            continue
+        log = matches[-1]
+        jid = log.stem.split("-")[-1]
+        extra.append(
+            {
+                "key": key,
+                "log": log,
+                "results": ROOT / f"EHREncoderTransformerEmbedPred/{out_sub}/results.json",
+                "label": f"{short}\n({jid})",
+                "short": short,
+                "color": color,
+            }
+        )
+    return extra
+
+
 S2F_MAJORITY = 0.6825
 P2F_MAJORITY = 0.5106
 
@@ -175,10 +202,13 @@ def _xy(epochs: list[dict], key: str) -> tuple[np.ndarray, np.ndarray]:
 
 
 def plot_test_accuracy_compare(runs: list[dict], out_path: Path) -> None:
+    bar_runs = [r for r in runs if (r.get("test") or {}).get("acc_s2f") is not None]
+    if not bar_runs:
+        return
     fig, ax = plt.subplots(figsize=(10, 5.5))
-    names = [r["label"] for r in runs]
-    s2f = [r.get("test", {}).get("acc_s2f", np.nan) for r in runs]
-    p2f = [r.get("test", {}).get("acc_p2f", np.nan) for r in runs]
+    names = [r["label"] for r in bar_runs]
+    s2f = [(r.get("test") or {}).get("acc_s2f", np.nan) for r in bar_runs]
+    p2f = [(r.get("test") or {}).get("acc_p2f", np.nan) for r in bar_runs]
     x = np.arange(len(names))
     w = 0.35
     bars_s = ax.bar(x - w / 2, s2f, w, label="Test acc s2f", color="#1f77b4", edgecolor="white")
@@ -405,17 +435,30 @@ def plot_config_table(runs: list[dict], out_path: Path) -> None:
     plt.close(fig)
 
 
+def _load_cached_run(key: str) -> dict | None:
+    cache = OUT_DIR / "metrics.json"
+    if not cache.is_file():
+        return None
+    for run in json.loads(cache.read_text()):
+        if run.get("key") == key and run.get("finetune_epochs"):
+            return run
+    return None
+
+
 def main() -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     parsed = []
-    for spec in RUNS:
-        if not spec["log"].is_file():
-            print(f"SKIP missing log: {spec['log']}")
-            continue
-        run = parse_two_phase_log(
-            spec["log"],
-            {"key": spec["key"], "label": spec["label"], "short": spec["short"], "color": spec["color"]},
-        )
+    for spec in RUNS + _discover_followup_runs():
+        meta = {"key": spec["key"], "label": spec["label"], "short": spec["short"], "color": spec["color"]}
+        if spec["log"].is_file():
+            run = parse_two_phase_log(spec["log"], meta)
+        else:
+            cached = _load_cached_run(spec["key"])
+            if cached is None:
+                print(f"SKIP missing log: {spec['log']}")
+                continue
+            print(f"Using cached metrics for {spec['key']} (log deleted)")
+            run = {**cached, **meta}
         if spec["results"].is_file():
             run["results_json"] = json.loads(spec["results"].read_text())
         parsed.append(run)

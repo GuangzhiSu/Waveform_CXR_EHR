@@ -63,6 +63,7 @@ OUTPUT_DIR = str(EXP_DIR / "output")
 INCLUDE_ANCHOR_SLOT = False
 # Balanced with s2f; large p2f weights destabilize sparse p2f mini-batches.
 P2F_LOSS_WEIGHT = 1.0
-USE_CLASS_WEIGHTS = True
+USE_CLASS_WEIGHTS = False
+LABEL_SMOOTHING = 0.05
 MAX_GRAD_NORM = 1.0
 GRAD_CLIP = MAX_GRAD_NORM  # alias for --grad_clip

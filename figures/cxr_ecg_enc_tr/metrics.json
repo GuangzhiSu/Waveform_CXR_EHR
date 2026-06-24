@@ -1,0 +1,154 @@
+{
+  "cxr_5k": {
+    "name": "CXR enc tr (5k)",
+    "job_id": "47646619",
+    "epochs": [
+      {
+        "epoch": 1,
+        "train_loss": 1.115,
+        "val_loss": 1.0988,
+        "val_acc_s2f": 0.158879,
+        "val_acc_p2f": 0.558442
+      },
+      {
+        "epoch": 2,
+        "train_loss": 1.114,
+        "val_loss": 1.1048,
+        "val_acc_s2f": 0.18024,
+        "val_acc_p2f": 0.519481
+      },
+      {
+        "epoch": 3,
+        "train_loss": 1.1043,
+        "val_loss": 1.1044,
+        "val_acc_s2f": 0.18024,
+        "val_acc_p2f": 0.519481
+      },
+      {
+        "epoch": 4,
+        "train_loss": 1.1024,
+        "val_loss": 1.1036,
+        "val_acc_s2f": 0.158879,
+        "val_acc_p2f": 0.532468
+      },
+      {
+        "epoch": 5,
+        "train_loss": 1.1009,
+        "val_loss": 1.1053,
+        "val_acc_s2f": 0.662216,
+        "val_acc_p2f": 0.142857
+      },
+      {
+        "epoch": 6,
+        "train_loss": 1.0993,
+        "val_loss": 1.1045,
+        "val_acc_s2f": 0.660881,
+        "val_acc_p2f": 0.558442
+      },
+      {
+        "epoch": 7,
+        "train_loss": 1.102,
+        "val_loss": 1.1003,
+        "val_acc_s2f": 0.158879,
+        "val_acc_p2f": 0.519481
+      },
+      {
+        "epoch": 8,
+        "train_loss": 1.0998,
+        "val_loss": 1.0958,
+        "val_acc_s2f": 0.651535,
+        "val_acc_p2f": 0.532468
+      },
+      {
+        "epoch": 9,
+        "train_loss": 1.0996,
+        "val_loss": 1.0969,
+        "val_acc_s2f": 0.189586,
+        "val_acc_p2f": 0.519481
+      },
+      {
+        "epoch": 10,
+        "train_loss": 1.1015,
+        "val_loss": 1.0946,
+        "val_acc_s2f": 0.574099,
+        "val_acc_p2f": 0.532468
+      },
+      {
+        "epoch": 11,
+        "train_loss": 1.0993,
+        "val_loss": 1.0971,
+        "val_acc_s2f": 0.651535,
+        "val_acc_p2f": 0.519481
+      },
+      {
+        "epoch": 12,
+        "train_loss": 1.1002,
+        "val_loss": 1.0963,
+        "val_acc_s2f": 0.574099,
+        "val_acc_p2f": 0.337662
+      },
+      {
+        "epoch": 13,
+        "train_loss": 1.098,
+        "val_loss": 1.1003,
+        "val_acc_s2f": 0.158879,
+        "val_acc_p2f": 0.519481
+      },
+      {
+        "epoch": 14,
+        "train_loss": 1.0973,
+        "val_loss": 1.1001,
+        "val_acc_s2f": 0.18024,
+        "val_acc_p2f": 0.519481
+      },
+      {
+        "epoch": 15,
+        "train_loss": 1.0983,
+        "val_loss": 1.0951,
+        "val_acc_s2f": 0.596796,
+        "val_acc_p2f": 0.428571
+      }
+    ],
+    "test": {
+      "loss": 1.1005,
+      "acc_s2f": 0.548,
+      "acc_p2f": 0.5195
+    }
+  },
+  "summary": [
+    {
+      "label": "CXR 5k\n47646619",
+      "test": {
+        "loss": 1.1005,
+        "acc_s2f": 0.548,
+        "acc_p2f": 0.5195
+      }
+    },
+    {
+      "label": "CXR full\noutput",
+      "test": {
+        "loss": 1.0890199338371431,
+        "acc_s2f": 0.6311191563041083,
+        "acc_p2f": 0.489247311827957,
+        "use_class_weights": true
+      }
+    },
+    {
+      "label": "ECG full\noutput",
+      "test": {
+        "loss": 1.07869904852928,
+        "acc_s2f": 0.2774798927613941,
+        "acc_p2f": 0.5254237288135594,
+        "use_class_weights": true
+      }
+    },
+    {
+      "label": "CXR-Fix-A\n47837620",
+      "test": null
+    },
+    {
+      "label": "CXR-Fix-B\n47837621",
+      "test": null
+    }
+  ]
+}

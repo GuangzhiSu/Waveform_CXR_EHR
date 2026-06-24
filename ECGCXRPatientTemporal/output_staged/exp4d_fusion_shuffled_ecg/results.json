@@ -1,0 +1,1275 @@
+{
+  "spec": {
+    "name": "exp4d_fusion_shuffled_ecg",
+    "description": "Shortcut control D: CXR_t1 + shuffled (other-patient) ECG sequence -> CXR_t2.",
+    "pairs_kind": "seq_t1",
+    "target_window": "3-48h",
+    "use_cxr_t1": true,
+    "use_ecg": true,
+    "ecg_mode": "sequence",
+    "use_predictor_g": true,
+    "use_time_embedding": true,
+    "use_transformer": true,
+    "use_future_query": false,
+    "ecg_pool": "mean",
+    "ecg_proj_kind": "linear",
+    "ecg_perturb": "shuffle",
+    "loss_mode": "combined",
+    "lambda_temporal": 0.2
+  },
+  "loss_mode": "combined",
+  "w_cross": 1.0,
+  "w_temporal": 0.2,
+  "best_epoch": 31,
+  "best_val_monitor": 0.11655172413793104,
+  "n_trainable_params": 3355392,
+  "test": {
+    "cross_patient": {
+      "n_queries": 2875,
+      "gallery_size": 1883,
+      "recall@1": 0.11756521739130435,
+      "recall@5": 0.41739130434782606,
+      "recall@10": 0.5401739130434783,
+      "mrr": 0.255395575829054,
+      "median_rank": 8.0
+    },
+    "temporal": {
+      "n_queries": 2646,
+      "temporal_recall@1": 0.23582766439909297,
+      "temporal_recall@5": 0.8499622071050642,
+      "temporal_mrr": 0.48218998818507364
+    }
+  },
+  "history": [
+    {
+      "epoch": 1,
+      "train": {
+        "loss": 3.083003300839983,
+        "cross_patient_loss": 2.932366673293931,
+        "temporal_loss": 0.7531831501542455,
+        "steps": 391,
+        "skipped": 0,
+        "avg_temporal_rows": 18.501278772378516
+      },
+      "val": {
+        "cross_patient": {
+          "n_queries": 2900,
+          "gallery_size": 1817,
+          "recall@1": 0.014827586206896552,
+          "recall@5": 0.06793103448275863,
+          "recall@10": 0.12655172413793103,
+          "mrr": 0.05438941353824304,
+          "median_rank": 109.5
+        },
+        "temporal": {
+          "n_queries": 2682,
+          "temporal_recall@1": 0.23564504101416853,
+          "temporal_recall@5": 0.8307233407904548,
+          "temporal_mrr": 0.47618109511301654
+        }
+      },
+      "monitor": 0.014827586206896552,
+      "temperature": 0.07000000029802322
+    },
+    {
+      "epoch": 2,
+      "train": {
+        "loss": 2.160907774020339,
+        "cross_patient_loss": 1.9825433635955576,
+        "temporal_loss": 0.8918220522763479,
+        "steps": 391,
+        "skipped": 0,
+        "avg_temporal_rows": 18.685421994884912
+      },
+      "val": {
+        "cross_patient": {
+          "n_queries": 2900,
+          "gallery_size": 1817,
+          "recall@1": 0.05068965517241379,
+          "recall@5": 0.1896551724137931,
+          "recall@10": 0.2696551724137931,
+          "mrr": 0.12467068043111289,
+          "median_rank": 42.0
+        },
+        "temporal": {
+          "n_queries": 2682,
+          "temporal_recall@1": 0.23788217747949292,
+          "temporal_recall@5": 0.8478747203579419,
+          "temporal_mrr": 0.48335814298184165
+        }
+      },
+      "monitor": 0.05068965517241379,
+      "temperature": 0.07000000029802322
+    },
+    {
+      "epoch": 3,
+      "train": {
+        "loss": 1.8177431343156663,
+        "cross_patient_loss": 1.6292027838699652,
+        "temporal_loss": 0.9427017567255308,
+        "steps": 391,
+        "skipped": 0,
+        "avg_temporal_rows": 18.455242966751918
+      },
+      "val": {
+        "cross_patient": {
+          "n_queries": 2900,
+          "gallery_size": 1817,
+          "recall@1": 0.06,
+          "recall@5": 0.21068965517241378,
+          "recall@10": 0.30586206896551726,
+          "mrr": 0.14244047237910676,
+          "median_rank": 32.0
+        },
+        "temporal": {
+          "n_queries": 2682,
+          "temporal_recall@1": 0.23378076062639822,
+          "temporal_recall@5": 0.8448918717375093,
+          "temporal_mrr": 0.4792794981733746
+        }
+      },
+      "monitor": 0.06,
+      "temperature": 0.07000000029802322
+    },
+    {
+      "epoch": 4,
+      "train": {
+        "loss": 1.6508400453935803,
+        "cross_patient_loss": 1.462433317433233,
+        "temporal_loss": 0.9420336439176593,
+        "steps": 391,
+        "skipped": 0,
+        "avg_temporal_rows": 19.07928388746803
+      },
+      "val": {
+        "cross_patient": {
+          "n_queries": 2900,
+          "gallery_size": 1817,
+          "recall@1": 0.060689655172413794,
+          "recall@5": 0.23379310344827586,
+          "recall@10": 0.33379310344827584,
+          "mrr": 0.1504644671823672,
+          "median_rank": 29.0
+        },
+        "temporal": {
+          "n_queries": 2682,
+          "temporal_recall@1": 0.2307979120059657,
+          "temporal_recall@5": 0.8448918717375093,
+          "temporal_mrr": 0.4794032974107871
+        }
+      },
+      "monitor": 0.060689655172413794,
+      "temperature": 0.07000000029802322
+    },
+    {
+      "epoch": 5,
+      "train": {
+        "loss": 1.587030410309277,
+        "cross_patient_loss": 1.3966103051324634,
+        "temporal_loss": 0.9521005222254701,
+        "steps": 391,
+        "skipped": 0,
+        "avg_temporal_rows": 18.854219948849106
+      },
+      "val": {
+        "cross_patient": {
+          "n_queries": 2900,
+          "gallery_size": 1817,
+          "recall@1": 0.07310344827586207,
+          "recall@5": 0.26241379310344826,
+          "recall@10": 0.3720689655172414,
+          "mrr": 0.1691318463866158,
+          "median_rank": 23.5
+        },
+        "temporal": {
+          "n_queries": 2682,
+          "temporal_recall@1": 0.23042505592841164,
+          "temporal_recall@5": 0.8471290082028337,
+          "temporal_mrr": 0.4805925193654344
+        }
+      },
+      "monitor": 0.07310344827586207,
+      "temperature": 0.07000000029802322
+    },
+    {
+      "epoch": 6,
+      "train": {
+        "loss": 1.5282784287277085,
+        "cross_patient_loss": 1.3348853017972864,
+        "temporal_loss": 0.9669656061455417,
+        "steps": 391,
+        "skipped": 0,
+        "avg_temporal_rows": 18.971867007672635
+      },
+      "val": {
+        "cross_patient": {
+          "n_queries": 2900,
+          "gallery_size": 1817,
+          "recall@1": 0.07344827586206897,
+          "recall@5": 0.28517241379310343,
+          "recall@10": 0.38689655172413795,
+          "mrr": 0.17885480249437416,
+          "median_rank": 20.0
+        },
+        "temporal": {
+          "n_queries": 2682,
+          "temporal_recall@1": 0.22893363161819538,
+          "temporal_recall@5": 0.8512304250559284,
+          "temporal_mrr": 0.4818536448623229
+        }
+      },
+      "monitor": 0.07344827586206897,
+      "temperature": 0.07000000029802322
+    },
+    {
+      "epoch": 7,
+      "train": {
+        "loss": 1.403094918221769,
+        "cross_patient_loss": 1.2101330430916204,
+        "temporal_loss": 0.9648093768702749,
+        "steps": 391,
+        "skipped": 0,
+        "avg_temporal_rows": 18.455242966751918
+      },
+      "val": {
+        "cross_patient": {
+          "n_queries": 2900,
+          "gallery_size": 1817,
+          "recall@1": 0.08103448275862069,
+          "recall@5": 0.28206896551724137,
+          "recall@10": 0.3979310344827586,
+          "mrr": 0.18216407553069958,
+          "median_rank": 18.0
+        },
+        "temporal": {
+          "n_queries": 2682,
+          "temporal_recall@1": 0.23378076062639822,
+          "temporal_recall@5": 0.8497390007457122,
+          "temporal_mrr": 0.4836012671357242
+        }
+      },
+      "monitor": 0.08103448275862069,
+      "temperature": 0.07000000029802322
+    },
+    {
+      "epoch": 8,
+      "train": {
+        "loss": 1.35361375985548,
+        "cross_patient_loss": 1.1579786839387607,
+        "temporal_loss": 0.978175381870221,
+        "steps": 391,
+        "skipped": 0,
+        "avg_temporal_rows": 18.52685421994885
+      },
+      "val": {
+        "cross_patient": {
+          "n_queries": 2900,
+          "gallery_size": 1817,
+          "recall@1": 0.09517241379310344,
+          "recall@5": 0.32,
+          "recall@10": 0.4279310344827586,
+          "mrr": 0.20501785955711438,
+          "median_rank": 16.0
+        },
+        "temporal": {
+          "n_queries": 2682,
+          "temporal_recall@1": 0.2371364653243848,
+          "temporal_recall@5": 0.8475018642803878,
+          "temporal_mrr": 0.48608378238039274
+        }
+      },
+      "monitor": 0.09517241379310344,
+      "temperature": 0.07000000029802322
+    },
+    {
+      "epoch": 9,
+      "train": {
+        "loss": 1.280512653653274,
+        "cross_patient_loss": 1.090281269434468,
+        "temporal_loss": 0.9511569172829923,
+        "steps": 391,
+        "skipped": 0,
+        "avg_temporal_rows": 18.52685421994885
+      },
+      "val": {
+        "cross_patient": {
+          "n_queries": 2900,
+          "gallery_size": 1817,
+          "recall@1": 0.09241379310344827,
+          "recall@5": 0.323448275862069,
+          "recall@10": 0.43896551724137933,
+          "mrr": 0.20502842531404789,
+          "median_rank": 15.0
+        },
+        "temporal": {
+          "n_queries": 2682,
+          "temporal_recall@1": 0.2371364653243848,
+          "temporal_recall@5": 0.8460104399701716,
+          "temporal_mrr": 0.48532901316729693
+        }
+      },
+      "monitor": 0.09241379310344827,
+      "temperature": 0.07000000029802322
+    },
+    {
+      "epoch": 10,
+      "train": {
+        "loss": 1.2246752667152667,
+        "cross_patient_loss": 1.0320390318055896,
+        "temporal_loss": 0.9631811651732306,
+        "steps": 391,
+        "skipped": 0,
+        "avg_temporal_rows": 19.232736572890026
+      },
+      "val": {
+        "cross_patient": {
+          "n_queries": 2900,
+          "gallery_size": 1817,
+          "recall@1": 0.08931034482758621,
+          "recall@5": 0.3182758620689655,
+          "recall@10": 0.43310344827586206,
+          "mrr": 0.20133297533579148,
+          "median_rank": 16.0
+        },
+        "temporal": {
+          "n_queries": 2682,
+          "temporal_recall@1": 0.23639075316927666,
+          "temporal_recall@5": 0.843400447427293,
+          "temporal_mrr": 0.4828137987469644
+        }
+      },
+      "monitor": 0.08931034482758621,
+      "temperature": 0.07000000029802322
+    },
+    {
+      "epoch": 11,
+      "train": {
+        "loss": 1.2408697669158506,
+        "cross_patient_loss": 1.0457673289281937,
+        "temporal_loss": 0.9755121867370118,
+        "steps": 391,
+        "skipped": 0,
+        "avg_temporal_rows": 18.460358056265985
+      },
+      "val": {
+        "cross_patient": {
+          "n_queries": 2900,
+          "gallery_size": 1817,
+          "recall@1": 0.09310344827586207,
+          "recall@5": 0.3303448275862069,
+          "recall@10": 0.44862068965517243,
+          "mrr": 0.20752442712736704,
+          "median_rank": 14.0
+        },
+        "temporal": {
+          "n_queries": 2682,
+          "temporal_recall@1": 0.2296793437733035,
+          "temporal_recall@5": 0.8467561521252797,
+          "temporal_mrr": 0.48085357210689156
+        }
+      },
+      "monitor": 0.09310344827586207,
+      "temperature": 0.07000000029802322
+    },
+    {
+      "epoch": 12,
+      "train": {
+        "loss": 1.1798524198019902,
+        "cross_patient_loss": 0.9847854012266144,
+        "temporal_loss": 0.9753350770229574,
+        "steps": 391,
+        "skipped": 0,
+        "avg_temporal_rows": 18.56777493606138
+      },
+      "val": {
+        "cross_patient": {
+          "n_queries": 2900,
+          "gallery_size": 1817,
+          "recall@1": 0.09448275862068965,
+          "recall@5": 0.3306896551724138,
+          "recall@10": 0.4506896551724138,
+          "mrr": 0.21142594749438834,
+          "median_rank": 14.0
+        },
+        "temporal": {
+          "n_queries": 2682,
+          "temporal_recall@1": 0.23340790454884414,
+          "temporal_recall@5": 0.8448918717375093,
+          "temporal_mrr": 0.4822479360321199
+        }
+      },
+      "monitor": 0.09448275862068965,
+      "temperature": 0.07000000029802322
+    },
+    {
+      "epoch": 13,
+      "train": {
+        "loss": 1.149923003390622,
+        "cross_patient_loss": 0.9605221424413763,
+        "temporal_loss": 0.9470042789836064,
+        "steps": 391,
+        "skipped": 0,
+        "avg_temporal_rows": 18.721227621483376
+      },
+      "val": {
+        "cross_patient": {
+          "n_queries": 2900,
+          "gallery_size": 1817,
+          "recall@1": 0.10482758620689656,
+          "recall@5": 0.34413793103448276,
+          "recall@10": 0.46448275862068966,
+          "mrr": 0.22171700006309744,
+          "median_rank": 13.0
+        },
+        "temporal": {
+          "n_queries": 2682,
+          "temporal_recall@1": 0.2371364653243848,
+          "temporal_recall@5": 0.843400447427293,
+          "temporal_mrr": 0.4841463819217681
+        }
+      },
+      "monitor": 0.10482758620689656,
+      "temperature": 0.07000000029802322
+    },
+    {
+      "epoch": 14,
+      "train": {
+        "loss": 1.1102360362744392,
+        "cross_patient_loss": 0.9158145606975117,
+        "temporal_loss": 0.9721073542561982,
+        "steps": 391,
+        "skipped": 0,
+        "avg_temporal_rows": 18.562659846547316
+      },
+      "val": {
+        "cross_patient": {
+          "n_queries": 2900,
+          "gallery_size": 1817,
+          "recall@1": 0.09413793103448276,
+          "recall@5": 0.3472413793103448,
+          "recall@10": 0.4579310344827586,
+          "mrr": 0.21217822235859413,
+          "median_rank": 13.0
+        },
+        "temporal": {
+          "n_queries": 2682,
+          "temporal_recall@1": 0.23639075316927666,
+          "temporal_recall@5": 0.8437733035048471,
+          "temporal_mrr": 0.48231759904591964
+        }
+      },
+      "monitor": 0.09413793103448276,
+      "temperature": 0.07000000029802322
+    },
+    {
+      "epoch": 15,
+      "train": {
+        "loss": 1.11766365582071,
+        "cross_patient_loss": 0.9229614583732527,
+        "temporal_loss": 0.9735109790054428,
+        "steps": 391,
+        "skipped": 0,
+        "avg_temporal_rows": 18.92071611253197
+      },
+      "val": {
+        "cross_patient": {
+          "n_queries": 2900,
+          "gallery_size": 1817,
+          "recall@1": 0.09482758620689655,
+          "recall@5": 0.33,
+          "recall@10": 0.4617241379310345,
+          "mrr": 0.21138949609382085,
+          "median_rank": 13.0
+        },
+        "temporal": {
+          "n_queries": 2682,
+          "temporal_recall@1": 0.232662192393736,
+          "temporal_recall@5": 0.8460104399701716,
+          "temporal_mrr": 0.4815572906582174
+        }
+      },
+      "monitor": 0.09482758620689655,
+      "temperature": 0.07000000029802322
+    },
+    {
+      "epoch": 16,
+      "train": {
+        "loss": 1.0830508296751915,
+        "cross_patient_loss": 0.8913451078755167,
+        "temporal_loss": 0.9585285878089993,
+        "steps": 391,
+        "skipped": 0,
+        "avg_temporal_rows": 18.751918158567776
+      },
+      "val": {
+        "cross_patient": {
+          "n_queries": 2900,
+          "gallery_size": 1817,
+          "recall@1": 0.09827586206896552,
+          "recall@5": 0.3372413793103448,
+          "recall@10": 0.4510344827586207,
+          "mrr": 0.21298780807755893,
+          "median_rank": 14.0
+        },
+        "temporal": {
+          "n_queries": 2682,
+          "temporal_recall@1": 0.23676360924683074,
+          "temporal_recall@5": 0.8378076062639821,
+          "temporal_mrr": 0.4833189425912968
+        }
+      },
+      "monitor": 0.09827586206896552,
+      "temperature": 0.07000000029802322
+    },
+    {
+      "epoch": 17,
+      "train": {
+        "loss": 1.0624006793017278,
+        "cross_patient_loss": 0.8708774259175791,
+        "temporal_loss": 0.9576162546491989,
+        "steps": 391,
+        "skipped": 0,
+        "avg_temporal_rows": 18.895140664961637
+      },
+      "val": {
+        "cross_patient": {
+          "n_queries": 2900,
+          "gallery_size": 1817,
+          "recall@1": 0.10517241379310345,
+          "recall@5": 0.36310344827586205,
+          "recall@10": 0.48413793103448277,
+          "mrr": 0.22890078069204253,
+          "median_rank": 11.0
+        },
+        "temporal": {
+          "n_queries": 2682,
+          "temporal_recall@1": 0.23303504847129008,
+          "temporal_recall@5": 0.8392990305741984,
+          "temporal_mrr": 0.483005480143479
+        }
+      },
+      "monitor": 0.10517241379310345,
+      "temperature": 0.07000000029802322
+    },
+    {
+      "epoch": 18,
+      "train": {
+        "loss": 1.0472498878341197,
+        "cross_patient_loss": 0.8532503672572963,
+        "temporal_loss": 0.9699975858106638,
+        "steps": 391,
+        "skipped": 0,
+        "avg_temporal_rows": 18.491048593350385
+      },
+      "val": {
+        "cross_patient": {
+          "n_queries": 2900,
+          "gallery_size": 1817,
+          "recall@1": 0.10862068965517241,
+          "recall@5": 0.36482758620689654,
+          "recall@10": 0.49310344827586206,
+          "mrr": 0.2303388605731351,
+          "median_rank": 11.0
+        },
+        "temporal": {
+          "n_queries": 2682,
+          "temporal_recall@1": 0.22893363161819538,
+          "temporal_recall@5": 0.8448918717375093,
+          "temporal_mrr": 0.48063504286098613
+        }
+      },
+      "monitor": 0.10862068965517241,
+      "temperature": 0.07000000029802322
+    },
+    {
+      "epoch": 19,
+      "train": {
+        "loss": 1.0526211796056888,
+        "cross_patient_loss": 0.8612770648182505,
+        "temporal_loss": 0.9567205530145894,
+        "steps": 391,
+        "skipped": 0,
+        "avg_temporal_rows": 18.65984654731458
+      },
+      "val": {
+        "cross_patient": {
+          "n_queries": 2900,
+          "gallery_size": 1817,
+          "recall@1": 0.10344827586206896,
+          "recall@5": 0.36448275862068963,
+          "recall@10": 0.49586206896551727,
+          "mrr": 0.22877915370177496,
+          "median_rank": 11.0
+        },
+        "temporal": {
+          "n_queries": 2682,
+          "temporal_recall@1": 0.23117076808351977,
+          "temporal_recall@5": 0.8463832960477256,
+          "temporal_mrr": 0.48057211763910634
+        }
+      },
+      "monitor": 0.10344827586206896,
+      "temperature": 0.07000000029802322
+    },
+    {
+      "epoch": 20,
+      "train": {
+        "loss": 0.9833367569062411,
+        "cross_patient_loss": 0.7934329912942999,
+        "temporal_loss": 0.9495188090045129,
+        "steps": 391,
+        "skipped": 0,
+        "avg_temporal_rows": 18.644501278772378
+      },
+      "val": {
+        "cross_patient": {
+          "n_queries": 2900,
+          "gallery_size": 1817,
+          "recall@1": 0.10275862068965518,
+          "recall@5": 0.3506896551724138,
+          "recall@10": 0.4696551724137931,
+          "mrr": 0.22107667805245687,
+          "median_rank": 13.0
+        },
+        "temporal": {
+          "n_queries": 2682,
+          "temporal_recall@1": 0.2348993288590604,
+          "temporal_recall@5": 0.8445190156599552,
+          "temporal_mrr": 0.4803239061729632
+        }
+      },
+      "monitor": 0.10275862068965518,
+      "temperature": 0.07000000029802322
+    },
+    {
+      "epoch": 21,
+      "train": {
+        "loss": 1.0204565539536878,
+        "cross_patient_loss": 0.8254468174999022,
+        "temporal_loss": 0.9750486601649038,
+        "steps": 391,
+        "skipped": 0,
+        "avg_temporal_rows": 18.782608695652176
+      },
+      "val": {
+        "cross_patient": {
+          "n_queries": 2900,
+          "gallery_size": 1817,
+          "recall@1": 0.10620689655172413,
+          "recall@5": 0.36379310344827587,
+          "recall@10": 0.4903448275862069,
+          "mrr": 0.2311987288133651,
+          "median_rank": 11.0
+        },
+        "temporal": {
+          "n_queries": 2682,
+          "temporal_recall@1": 0.22818791946308725,
+          "temporal_recall@5": 0.8493661446681581,
+          "temporal_mrr": 0.4814025024056992
+        }
+      },
+      "monitor": 0.10620689655172413,
+      "temperature": 0.07000000029802322
+    },
+    {
+      "epoch": 22,
+      "train": {
+        "loss": 0.9855772226362887,
+        "cross_patient_loss": 0.7959794814095777,
+        "temporal_loss": 0.9479886945098868,
+        "steps": 391,
+        "skipped": 0,
+        "avg_temporal_rows": 19.053708439897697
+      },
+      "val": {
+        "cross_patient": {
+          "n_queries": 2900,
+          "gallery_size": 1817,
+          "recall@1": 0.11068965517241379,
+          "recall@5": 0.38689655172413795,
+          "recall@10": 0.5062068965517241,
+          "mrr": 0.24106118071006896,
+          "median_rank": 10.0
+        },
+        "temporal": {
+          "n_queries": 2682,
+          "temporal_recall@1": 0.2348993288590604,
+          "temporal_recall@5": 0.8467561521252797,
+          "temporal_mrr": 0.4853599467310882
+        }
+      },
+      "monitor": 0.11068965517241379,
+      "temperature": 0.07000000029802322
+    },
+    {
+      "epoch": 23,
+      "train": {
+        "loss": 0.931612869662702,
+        "cross_patient_loss": 0.7410962799244829,
+        "temporal_loss": 0.9525829218994931,
+        "steps": 391,
+        "skipped": 0,
+        "avg_temporal_rows": 18.501278772378516
+      },
+      "val": {
+        "cross_patient": {
+          "n_queries": 2900,
+          "gallery_size": 1817,
+          "recall@1": 0.10724137931034483,
+          "recall@5": 0.3717241379310345,
+          "recall@10": 0.4906896551724138,
+          "mrr": 0.23138263417133006,
+          "median_rank": 11.0
+        },
+        "temporal": {
+          "n_queries": 2682,
+          "temporal_recall@1": 0.226696495152871,
+          "temporal_recall@5": 0.8471290082028337,
+          "temporal_mrr": 0.4795648834136856
+        }
+      },
+      "monitor": 0.10724137931034483,
+      "temperature": 0.07000000029802322
+    },
+    {
+      "epoch": 24,
+      "train": {
+        "loss": 0.9366834576782364,
+        "cross_patient_loss": 0.7474460556074176,
+        "temporal_loss": 0.9461869932044192,
+        "steps": 391,
+        "skipped": 0,
+        "avg_temporal_rows": 18.864450127877237
+      },
+      "val": {
+        "cross_patient": {
+          "n_queries": 2900,
+          "gallery_size": 1817,
+          "recall@1": 0.0996551724137931,
+          "recall@5": 0.3720689655172414,
+          "recall@10": 0.4917241379310345,
+          "mrr": 0.2287755579080271,
+          "median_rank": 11.0
+        },
+        "temporal": {
+          "n_queries": 2682,
+          "temporal_recall@1": 0.22818791946308725,
+          "temporal_recall@5": 0.8411633109619687,
+          "temporal_mrr": 0.4791217856972765
+        }
+      },
+      "monitor": 0.0996551724137931,
+      "temperature": 0.07000000029802322
+    },
+    {
+      "epoch": 25,
+      "train": {
+        "loss": 0.918605123182087,
+        "cross_patient_loss": 0.7235344364819929,
+        "temporal_loss": 0.975353409414706,
+        "steps": 391,
+        "skipped": 0,
+        "avg_temporal_rows": 18.62915601023018
+      },
+      "val": {
+        "cross_patient": {
+          "n_queries": 2900,
+          "gallery_size": 1817,
+          "recall@1": 0.10655172413793103,
+          "recall@5": 0.3762068965517241,
+          "recall@10": 0.49448275862068963,
+          "mrr": 0.23498078610592105,
+          "median_rank": 11.0
+        },
+        "temporal": {
+          "n_queries": 2682,
+          "temporal_recall@1": 0.232662192393736,
+          "temporal_recall@5": 0.8471290082028337,
+          "temporal_mrr": 0.4838317539822216
+        }
+      },
+      "monitor": 0.10655172413793103,
+      "temperature": 0.07000000029802322
+    },
+    {
+      "epoch": 26,
+      "train": {
+        "loss": 0.9217800392061853,
+        "cross_patient_loss": 0.730353229872101,
+        "temporal_loss": 0.9571340239566305,
+        "steps": 391,
+        "skipped": 0,
+        "avg_temporal_rows": 18.48081841432225
+      },
+      "val": {
+        "cross_patient": {
+          "n_queries": 2900,
+          "gallery_size": 1817,
+          "recall@1": 0.10793103448275862,
+          "recall@5": 0.3713793103448276,
+          "recall@10": 0.4868965517241379,
+          "mrr": 0.23565010759073018,
+          "median_rank": 11.5
+        },
+        "temporal": {
+          "n_queries": 2682,
+          "temporal_recall@1": 0.2296793437733035,
+          "temporal_recall@5": 0.8460104399701716,
+          "temporal_mrr": 0.4813243063736096
+        }
+      },
+      "monitor": 0.10793103448275862,
+      "temperature": 0.07000000029802322
+    },
+    {
+      "epoch": 27,
+      "train": {
+        "loss": 0.8986999099059483,
+        "cross_patient_loss": 0.7082034146313168,
+        "temporal_loss": 0.9524824484382444,
+        "steps": 391,
+        "skipped": 0,
+        "avg_temporal_rows": 18.80306905370844
+      },
+      "val": {
+        "cross_patient": {
+          "n_queries": 2900,
+          "gallery_size": 1817,
+          "recall@1": 0.11448275862068966,
+          "recall@5": 0.3913793103448276,
+          "recall@10": 0.5079310344827587,
+          "mrr": 0.24471901012700034,
+          "median_rank": 10.0
+        },
+        "temporal": {
+          "n_queries": 2682,
+          "temporal_recall@1": 0.2360178970917226,
+          "temporal_recall@5": 0.8437733035048471,
+          "temporal_mrr": 0.4831340201378947
+        }
+      },
+      "monitor": 0.11448275862068966,
+      "temperature": 0.07000000029802322
+    },
+    {
+      "epoch": 28,
+      "train": {
+        "loss": 0.8942472832587064,
+        "cross_patient_loss": 0.7056061507338454,
+        "temporal_loss": 0.9432056405202812,
+        "steps": 391,
+        "skipped": 0,
+        "avg_temporal_rows": 18.93606138107417
+      },
+      "val": {
+        "cross_patient": {
+          "n_queries": 2900,
+          "gallery_size": 1817,
+          "recall@1": 0.10793103448275862,
+          "recall@5": 0.3737931034482759,
+          "recall@10": 0.4906896551724138,
+          "mrr": 0.23280961304303208,
+          "median_rank": 11.0
+        },
+        "temporal": {
+          "n_queries": 2682,
+          "temporal_recall@1": 0.2348993288590604,
+          "temporal_recall@5": 0.8460104399701716,
+          "temporal_mrr": 0.48373030951370355
+        }
+      },
+      "monitor": 0.10793103448275862,
+      "temperature": 0.07000000029802322
+    },
+    {
+      "epoch": 29,
+      "train": {
+        "loss": 0.8771040908363469,
+        "cross_patient_loss": 0.6893939448287115,
+        "temporal_loss": 0.9385507158611132,
+        "steps": 391,
+        "skipped": 0,
+        "avg_temporal_rows": 18.649616368286445
+      },
+      "val": {
+        "cross_patient": {
+          "n_queries": 2900,
+          "gallery_size": 1817,
+          "recall@1": 0.10689655172413794,
+          "recall@5": 0.37482758620689655,
+          "recall@10": 0.4868965517241379,
+          "mrr": 0.23082552288609076,
+          "median_rank": 11.0
+        },
+        "temporal": {
+          "n_queries": 2682,
+          "temporal_recall@1": 0.22744220730797912,
+          "temporal_recall@5": 0.8400447427293065,
+          "temporal_mrr": 0.4786811301114239
+        }
+      },
+      "monitor": 0.10689655172413794,
+      "temperature": 0.07000000029802322
+    },
+    {
+      "epoch": 30,
+      "train": {
+        "loss": 0.8258667784121335,
+        "cross_patient_loss": 0.6408218183099766,
+        "temporal_loss": 0.9252247885060128,
+        "steps": 391,
+        "skipped": 0,
+        "avg_temporal_rows": 18.455242966751918
+      },
+      "val": {
+        "cross_patient": {
+          "n_queries": 2900,
+          "gallery_size": 1817,
+          "recall@1": 0.10551724137931034,
+          "recall@5": 0.37655172413793103,
+          "recall@10": 0.5048275862068966,
+          "mrr": 0.23508289539800362,
+          "median_rank": 10.0
+        },
+        "temporal": {
+          "n_queries": 2682,
+          "temporal_recall@1": 0.2307979120059657,
+          "temporal_recall@5": 0.8463832960477256,
+          "temporal_mrr": 0.4811198406821719
+        }
+      },
+      "monitor": 0.10551724137931034,
+      "temperature": 0.07000000029802322
+    },
+    {
+      "epoch": 31,
+      "train": {
+        "loss": 0.8323745929524112,
+        "cross_patient_loss": 0.6525564761951451,
+        "temporal_loss": 0.8990905584429231,
+        "steps": 391,
+        "skipped": 0,
+        "avg_temporal_rows": 18.63938618925831
+      },
+      "val": {
+        "cross_patient": {
+          "n_queries": 2900,
+          "gallery_size": 1817,
+          "recall@1": 0.11655172413793104,
+          "recall@5": 0.3906896551724138,
+          "recall@10": 0.5096551724137931,
+          "mrr": 0.24498683222597115,
+          "median_rank": 10.0
+        },
+        "temporal": {
+          "n_queries": 2682,
+          "temporal_recall@1": 0.23676360924683074,
+          "temporal_recall@5": 0.8456375838926175,
+          "temporal_mrr": 0.4850727490011436
+        }
+      },
+      "monitor": 0.11655172413793104,
+      "temperature": 0.07000000029802322
+    },
+    {
+      "epoch": 32,
+      "train": {
+        "loss": 0.833304951486685,
+        "cross_patient_loss": 0.6489888840090589,
+        "temporal_loss": 0.9215803250022556,
+        "steps": 391,
+        "skipped": 0,
+        "avg_temporal_rows": 18.869565217391305
+      },
+      "val": {
+        "cross_patient": {
+          "n_queries": 2900,
+          "gallery_size": 1817,
+          "recall@1": 0.10620689655172413,
+          "recall@5": 0.3837931034482759,
+          "recall@10": 0.5006896551724138,
+          "mrr": 0.2367782750555316,
+          "median_rank": 10.0
+        },
+        "temporal": {
+          "n_queries": 2682,
+          "temporal_recall@1": 0.2285607755406413,
+          "temporal_recall@5": 0.8516032811334825,
+          "temporal_mrr": 0.47944108545872105
+        }
+      },
+      "monitor": 0.10620689655172413,
+      "temperature": 0.07000000029802322
+    },
+    {
+      "epoch": 33,
+      "train": {
+        "loss": 0.81820490910574,
+        "cross_patient_loss": 0.633000440457288,
+        "temporal_loss": 0.9260223267023521,
+        "steps": 391,
+        "skipped": 0,
+        "avg_temporal_rows": 18.690537084398976
+      },
+      "val": {
+        "cross_patient": {
+          "n_queries": 2900,
+          "gallery_size": 1817,
+          "recall@1": 0.10689655172413794,
+          "recall@5": 0.37482758620689655,
+          "recall@10": 0.4862068965517241,
+          "mrr": 0.23257048643157763,
+          "median_rank": 11.0
+        },
+        "temporal": {
+          "n_queries": 2682,
+          "temporal_recall@1": 0.22744220730797912,
+          "temporal_recall@5": 0.8448918717375093,
+          "temporal_mrr": 0.4781147333181223
+        }
+      },
+      "monitor": 0.10689655172413794,
+      "temperature": 0.07000000029802322
+    },
+    {
+      "epoch": 34,
+      "train": {
+        "loss": 0.796900772072775,
+        "cross_patient_loss": 0.6150604818406922,
+        "temporal_loss": 0.9092014338201879,
+        "steps": 391,
+        "skipped": 0,
+        "avg_temporal_rows": 18.77237851662404
+      },
+      "val": {
+        "cross_patient": {
+          "n_queries": 2900,
+          "gallery_size": 1817,
+          "recall@1": 0.10137931034482758,
+          "recall@5": 0.3706896551724138,
+          "recall@10": 0.49275862068965515,
+          "mrr": 0.22819438148556276,
+          "median_rank": 11.0
+        },
+        "temporal": {
+          "n_queries": 2682,
+          "temporal_recall@1": 0.2255779269202088,
+          "temporal_recall@5": 0.8478747203579419,
+          "temporal_mrr": 0.47796048291222604
+        }
+      },
+      "monitor": 0.10137931034482758,
+      "temperature": 0.07000000029802322
+    },
+    {
+      "epoch": 35,
+      "train": {
+        "loss": 0.7896351862289107,
+        "cross_patient_loss": 0.6101065981571022,
+        "temporal_loss": 0.8976429088036423,
+        "steps": 391,
+        "skipped": 0,
+        "avg_temporal_rows": 18.618925831202045
+      },
+      "val": {
+        "cross_patient": {
+          "n_queries": 2900,
+          "gallery_size": 1817,
+          "recall@1": 0.1103448275862069,
+          "recall@5": 0.38310344827586207,
+          "recall@10": 0.4982758620689655,
+          "mrr": 0.23798654349015372,
+          "median_rank": 11.0
+        },
+        "temporal": {
+          "n_queries": 2682,
+          "temporal_recall@1": 0.2296793437733035,
+          "temporal_recall@5": 0.8467561521252797,
+          "temporal_mrr": 0.47961792525204655
+        }
+      },
+      "monitor": 0.1103448275862069,
+      "temperature": 0.07000000029802322
+    },
+    {
+      "epoch": 36,
+      "train": {
+        "loss": 0.7757403029657691,
+        "cross_patient_loss": 0.5947167686260569,
+        "temporal_loss": 0.9051176466600365,
+        "steps": 391,
+        "skipped": 0,
+        "avg_temporal_rows": 18.721227621483376
+      },
+      "val": {
+        "cross_patient": {
+          "n_queries": 2900,
+          "gallery_size": 1817,
+          "recall@1": 0.10413793103448275,
+          "recall@5": 0.38551724137931037,
+          "recall@10": 0.496551724137931,
+          "mrr": 0.23554754963876667,
+          "median_rank": 11.0
+        },
+        "temporal": {
+          "n_queries": 2682,
+          "temporal_recall@1": 0.23117076808351977,
+          "temporal_recall@5": 0.8437733035048471,
+          "temporal_mrr": 0.4798862998176372
+        }
+      },
+      "monitor": 0.10413793103448275,
+      "temperature": 0.07000000029802322
+    },
+    {
+      "epoch": 37,
+      "train": {
+        "loss": 0.7756404048189178,
+        "cross_patient_loss": 0.5947777622419855,
+        "temporal_loss": 0.9043131959255394,
+        "steps": 391,
+        "skipped": 0,
+        "avg_temporal_rows": 18.726342710997443
+      },
+      "val": {
+        "cross_patient": {
+          "n_queries": 2900,
+          "gallery_size": 1817,
+          "recall@1": 0.10586206896551724,
+          "recall@5": 0.36482758620689654,
+          "recall@10": 0.4917241379310345,
+          "mrr": 0.23103411654839595,
+          "median_rank": 11.0
+        },
+        "temporal": {
+          "n_queries": 2682,
+          "temporal_recall@1": 0.22632363907531694,
+          "temporal_recall@5": 0.8404175988068605,
+          "temporal_mrr": 0.4767699462316063
+        }
+      },
+      "monitor": 0.10586206896551724,
+      "temperature": 0.07000000029802322
+    },
+    {
+      "epoch": 38,
+      "train": {
+        "loss": 0.7371911439291962,
+        "cross_patient_loss": 0.5609574762680342,
+        "temporal_loss": 0.8811683106376692,
+        "steps": 391,
+        "skipped": 0,
+        "avg_temporal_rows": 18.531969309462916
+      },
+      "val": {
+        "cross_patient": {
+          "n_queries": 2900,
+          "gallery_size": 1817,
+          "recall@1": 0.10862068965517241,
+          "recall@5": 0.3758620689655172,
+          "recall@10": 0.48482758620689653,
+          "mrr": 0.2338484300131937,
+          "median_rank": 12.0
+        },
+        "temporal": {
+          "n_queries": 2682,
+          "temporal_recall@1": 0.22073079791200598,
+          "temporal_recall@5": 0.8396718866517524,
+          "temporal_mrr": 0.47366013520603195
+        }
+      },
+      "monitor": 0.10862068965517241,
+      "temperature": 0.07000000029802322
+    },
+    {
+      "epoch": 39,
+      "train": {
+        "loss": 0.7340096197164881,
+        "cross_patient_loss": 0.5564517963039296,
+        "temporal_loss": 0.8877890897376458,
+        "steps": 391,
+        "skipped": 0,
+        "avg_temporal_rows": 18.726342710997443
+      },
+      "val": {
+        "cross_patient": {
+          "n_queries": 2900,
+          "gallery_size": 1817,
+          "recall@1": 0.10862068965517241,
+          "recall@5": 0.3813793103448276,
+          "recall@10": 0.5010344827586207,
+          "mrr": 0.2392259685314196,
+          "median_rank": 10.0
+        },
+        "temporal": {
+          "n_queries": 2682,
+          "temporal_recall@1": 0.22632363907531694,
+          "temporal_recall@5": 0.8411633109619687,
+          "temporal_mrr": 0.4786510392985749
+        }
+      },
+      "monitor": 0.10862068965517241,
+      "temperature": 0.07000000029802322
+    },
+    {
+      "epoch": 40,
+      "train": {
+        "loss": 0.7231762361953326,
+        "cross_patient_loss": 0.5509378708079647,
+        "temporal_loss": 0.8611918069669963,
+        "steps": 391,
+        "skipped": 0,
+        "avg_temporal_rows": 18.618925831202045
+      },
+      "val": {
+        "cross_patient": {
+          "n_queries": 2900,
+          "gallery_size": 1817,
+          "recall@1": 0.11137931034482759,
+          "recall@5": 0.3872413793103448,
+          "recall@10": 0.5131034482758621,
+          "mrr": 0.2431709104130682,
+          "median_rank": 10.0
+        },
+        "temporal": {
+          "n_queries": 2682,
+          "temporal_recall@1": 0.23042505592841164,
+          "temporal_recall@5": 0.843027591349739,
+          "temporal_mrr": 0.4807573976074834
+        }
+      },
+      "monitor": 0.11137931034482759,
+      "temperature": 0.07000000029802322
+    },
+    {
+      "epoch": 41,
+      "train": {
+        "loss": 0.7113501021776663,
+        "cross_patient_loss": 0.5383436325413492,
+        "temporal_loss": 0.8650323241720419,
+        "steps": 391,
+        "skipped": 0,
+        "avg_temporal_rows": 19.120204603580564
+      },
+      "val": {
+        "cross_patient": {
+          "n_queries": 2900,
+          "gallery_size": 1817,
+          "recall@1": 0.11172413793103449,
+          "recall@5": 0.39275862068965517,
+          "recall@10": 0.5089655172413793,
+          "mrr": 0.24255649875266255,
+          "median_rank": 10.0
+        },
+        "temporal": {
+          "n_queries": 2682,
+          "temporal_recall@1": 0.2319164802386279,
+          "temporal_recall@5": 0.8463832960477256,
+          "temporal_mrr": 0.4811006513399846
+        }
+      },
+      "monitor": 0.11172413793103449,
+      "temperature": 0.07000000029802322
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+{
+  "ckpt": "/work/gs285/Waveform_CXR_EHR/EHREncoderTransformer/output_fixC/best_acc.pt",
+  "seed": 42,
+  "baseline_ckpt": "/work/gs285/Waveform_CXR_EHR/EHREncoderTransformer/output/best.pt"
+}

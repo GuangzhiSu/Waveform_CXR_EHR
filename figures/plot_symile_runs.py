@@ -395,10 +395,24 @@ def plot_test_summary(tr: dict, embed: dict, embed2ph: dict, out_path: Path) -> 
     plt.close(fig)
 
 
+def _load_cached_metrics() -> dict | None:
+    cache = OUT_DIR / "metrics.json"
+    if cache.is_file():
+        return json.loads(cache.read_text())
+    return None
+
+
 def main() -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
+    cached = _load_cached_metrics()
     tr = parse_tr_log(LOGS / "ehr-symile-tr-47745355.out")
-    embed = parse_embed_log(LOGS / "ehr-symile-embed-47745356.out")
+    if LOGS.joinpath("ehr-symile-embed-47745356.out").is_file():
+        embed = parse_embed_log(LOGS / "ehr-symile-embed-47745356.out")
+    elif cached and cached.get("embed_log", {}).get("epochs"):
+        print("Using cached metrics for symile-embed 47745356 (log deleted)")
+        embed = cached["embed_log"]
+    else:
+        embed = {"name": "EHREncoderTransformerEmbedPred", "job_id": "47745356", "epochs": [], "test": None}
     embed2ph = parse_embed_2ph_log(LOGS / "ehr-symile-embed-2ph-47748678.out")
 
     metrics = {

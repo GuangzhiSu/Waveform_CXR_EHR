@@ -38,10 +38,16 @@ def masked_ce(
     y: torch.Tensor,
     valid: torch.Tensor,
     class_weight: Optional[torch.Tensor] = None,
+    label_smoothing: float = 0.0,
 ) -> torch.Tensor:
     if not valid.any():
         return logits.new_tensor(0.0)
-    return F.cross_entropy(logits[valid], y[valid], weight=class_weight)
+    return F.cross_entropy(
+        logits[valid],
+        y[valid],
+        weight=class_weight,
+        label_smoothing=label_smoothing,
+    )
 
 
 def _inverse_freq_weights(
@@ -88,14 +94,15 @@ def forward_loss_parts(
     p2f_loss_weight: float = 1.0,
     s2f_class_weight: Optional[torch.Tensor] = None,
     p2f_class_weight: Optional[torch.Tensor] = None,
+    label_smoothing: float = 0.0,
 ) -> Tuple[torch.Tensor, dict]:
     device = log_s.device
     s_tgt = batch["anchor_s2f"].to(device)
     p_tgt = batch["anchor_p2f"].to(device)
     s_ok = batch["anchor_has_s2f"].to(device) & (s_tgt >= 0)
     p_ok = batch["anchor_has_p2f"].to(device) & (p_tgt >= 0)
-    loss_s = masked_ce(log_s, s_tgt, s_ok, s2f_class_weight)
-    loss_p = masked_ce(log_p, p_tgt, p_ok, p2f_class_weight)
+    loss_s = masked_ce(log_s, s_tgt, s_ok, s2f_class_weight, label_smoothing=label_smoothing)
+    loss_p = masked_ce(log_p, p_tgt, p_ok, p2f_class_weight, label_smoothing=label_smoothing)
     n_s = int(s_ok.sum())
     n_p = int(p_ok.sum())
     if n_s and n_p:
@@ -471,6 +478,7 @@ def main(args):
         p2f_loss_weight=args.p2f_loss_weight,
         s2f_class_weight=s2f_w,
         p2f_class_weight=p2f_w,
+        label_smoothing=args.label_smoothing,
     )
 
     out_dir = Path(args.output_dir)
@@ -672,6 +680,7 @@ def main(args):
         "include_anchor_slot": args.include_anchor_slot,
         "p2f_loss_weight": args.p2f_loss_weight,
         "use_class_weights": args.use_class_weights,
+        "label_smoothing": args.label_smoothing,
         "max_grad_norm": args.max_grad_norm,
         "anchor_pool": args.anchor_pool,
         "freeze_cxr": not args.unfreeze_cxr,
@@ -739,6 +748,7 @@ if __name__ == "__main__":
     p.add_argument("--include_anchor_slot", action=argparse.BooleanOptionalAction, default=INCLUDE_ANCHOR_SLOT)
     p.add_argument("--p2f_loss_weight", type=float, default=P2F_LOSS_WEIGHT)
     p.add_argument("--use_class_weights", action=argparse.BooleanOptionalAction, default=USE_CLASS_WEIGHTS)
+    p.add_argument("--label_smoothing", type=float, default=LABEL_SMOOTHING)
     p.add_argument("--max_grad_norm", type=float, default=MAX_GRAD_NORM, help="Max grad norm (0=disable)")
     p.add_argument("--grad_clip", type=float, default=None, help=argparse.SUPPRESS)
     a = p.parse_args()

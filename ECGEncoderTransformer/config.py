@@ -70,5 +70,5 @@ MIN_UNIQUE_VAL_PREDS = 2
 # Append learnable anchor slot after lookback ECGs (classification pools ECG tokens by default).
 INCLUDE_ANCHOR_SLOT = True
 P2F_LOSS_WEIGHT = 1.0
-USE_CLASS_WEIGHTS = True
+USE_CLASS_WEIGHTS = False
 OUTPUT_DIR = str(EXP_DIR / "output")
