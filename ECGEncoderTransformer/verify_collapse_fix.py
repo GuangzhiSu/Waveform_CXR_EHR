@@ -61,7 +61,7 @@ def _mini_train_pred_diversity(
     device,
     *,
     steps: int = 80,
-    lr: float = 1e-4,
+    lr: float = 5e-4,
 ) -> dict:
     opt = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=lr, weight_decay=1e-3)
     model.train()

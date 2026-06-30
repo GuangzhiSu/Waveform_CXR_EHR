@@ -77,7 +77,7 @@ def count_all_invalid_rows(ds, n_scan=8000, seed=42, batch_size=16):
 
 def mini_train(forward_fn, model, batch, device, steps=5):
     b = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
-    opt = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=1e-4, weight_decay=1e-3)
+    opt = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=5e-4, weight_decay=1e-3)
     losses = []
     for _ in range(steps):
         log_s, log_p = forward_fn(model, b["ecg_seq"], b["ecg_mask"])

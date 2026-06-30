@@ -43,16 +43,10 @@ def masked_ce(
     y: torch.Tensor,
     valid: torch.Tensor,
     class_weight: Optional[torch.Tensor] = None,
-    label_smoothing: float = 0.0,
 ) -> torch.Tensor:
     if not valid.any():
         return logits.new_tensor(0.0)
-    return F.cross_entropy(
-        logits[valid],
-        y[valid],
-        weight=class_weight,
-        label_smoothing=label_smoothing,
-    )
+    return F.cross_entropy(logits[valid], y[valid], weight=class_weight)
 
 
 def _inverse_freq_weights(
@@ -98,15 +92,14 @@ def forward_loss_parts(
     p2f_loss_weight: float = 1.0,
     s2f_class_weight: Optional[torch.Tensor] = None,
     p2f_class_weight: Optional[torch.Tensor] = None,
-    label_smoothing: float = 0.0,
 ) -> Tuple[torch.Tensor, dict]:
     device = log_s.device
     s_tgt = batch["anchor_s2f"].to(device)
     p_tgt = batch["anchor_p2f"].to(device)
     s_ok = batch["anchor_has_s2f"].to(device) & (s_tgt >= 0)
     p_ok = batch["anchor_has_p2f"].to(device) & (p_tgt >= 0)
-    loss_s = masked_ce(log_s, s_tgt, s_ok, s2f_class_weight, label_smoothing=label_smoothing)
-    loss_p = masked_ce(log_p, p_tgt, p_ok, p2f_class_weight, label_smoothing=label_smoothing)
+    loss_s = masked_ce(log_s, s_tgt, s_ok, s2f_class_weight)
+    loss_p = masked_ce(log_p, p_tgt, p_ok, p2f_class_weight)
     n_s = int(s_ok.sum())
     n_p = int(p_ok.sum())
     if n_s and n_p:
@@ -128,7 +121,6 @@ def forward_loss_from_logits_parts(
     p2f_loss_weight: float = 1.0,
     s2f_class_weight: Optional[torch.Tensor] = None,
     p2f_class_weight: Optional[torch.Tensor] = None,
-    label_smoothing: float = 0.0,
 ) -> tuple:
     return forward_loss_parts(
         batch,
@@ -137,7 +129,6 @@ def forward_loss_from_logits_parts(
         p2f_loss_weight=p2f_loss_weight,
         s2f_class_weight=s2f_class_weight,
         p2f_class_weight=p2f_class_weight,
-        label_smoothing=label_smoothing,
     )
 
 
@@ -340,14 +331,8 @@ def main(args):
         print(f"  GPU: {torch.cuda.get_device_name(0)}")
     print(
         f"  Loss: p2f_weight={args.p2f_loss_weight}  class_weights={args.use_class_weights}  "
-        f"label_smoothing={args.label_smoothing}  anchor_pool={args.anchor_pool}  "
         f"include_anchor_slot={args.include_anchor_slot}"
     )
-    if args.p2f_loss_weight > 2.0 or args.lr > 2e-4:
-        print(
-            "  WARNING: high p2f_loss_weight and/or lr often cause NaN on sparse p2f batches; "
-            "prefer --p2f_loss_weight 1.0 --lr 1e-4"
-        )
 
     if not Path(args.ecg_labeled_csv).is_file():
         raise FileNotFoundError(f"Labeled ECG CSV not found: {args.ecg_labeled_csv}")
@@ -461,7 +446,6 @@ def main(args):
         p2f_loss_weight=args.p2f_loss_weight,
         s2f_class_weight=s2f_w,
         p2f_class_weight=p2f_w,
-        label_smoothing=args.label_smoothing,
     )
 
     out_dir = Path(args.output_dir)
@@ -599,15 +583,9 @@ def main(args):
             _restore_trainable(model, epoch_snap)
             print(f"  Restored trainable weights to start-of-epoch snapshot (epoch {epoch + 1})")
             break
-        if n_tr_batches == 0:
-            tr = tr_s = tr_p = float("nan")
-            print(
-                "  WARNING: no training batches completed this epoch (all skipped); train_loss=nan"
-            )
-        else:
-            tr /= n_tr_batches
-            tr_s /= n_tr_batches
-            tr_p /= n_tr_batches
+        tr /= max(n_tr_batches, 1)
+        tr_s /= max(n_tr_batches, 1)
+        tr_p /= max(n_tr_batches, 1)
         epoch_param_delta = _param_delta_l2(model, param_snap_start) if epoch == 0 else None
         st = eval_loader(model, val_loader, device, collect_pred_hist=True, **loss_kw)
         print(
@@ -631,12 +609,7 @@ def main(args):
                 else ""
             )
         )
-        n_unique_s2f = int(st.get("n_unique_pred_s2f", 0))
-        improved = (
-            np.isfinite(st["loss"])
-            and st["loss"] < best_val - args.early_stop_min_delta
-            and n_unique_s2f >= args.min_unique_val_preds
-        )
+        improved = np.isfinite(st["loss"]) and st["loss"] < best_val - args.early_stop_min_delta
         if improved:
             best_val = st["loss"]
             best_epoch = epoch
@@ -647,15 +620,6 @@ def main(args):
             )
         else:
             epochs_no_improve += 1
-            if (
-                np.isfinite(st["loss"])
-                and st["loss"] < best_val - args.early_stop_min_delta
-                and n_unique_s2f < args.min_unique_val_preds
-            ):
-                print(
-                    f"  NOTE: val loss improved but skipped best.pt "
-                    f"(unique s2f preds={n_unique_s2f} < {args.min_unique_val_preds})"
-                )
 
         if args.early_stop_patience > 0 and epochs_no_improve >= args.early_stop_patience:
             print(
@@ -665,10 +629,7 @@ def main(args):
             stopped_early = True
             break
 
-    if _trainable_finite(model):
-        torch.save(model.state_dict(), out_dir / "last.pt")
-    else:
-        print("\nWARNING: skipping last.pt save (non-finite trainable weights)")
+    torch.save(model.state_dict(), out_dir / "last.pt")
     has_best = (out_dir / "best.pt").is_file()
     if has_best:
         ck = torch.load(out_dir / "best.pt", map_location=device, weights_only=False)
@@ -699,8 +660,6 @@ def main(args):
         "p2f_loss_weight": args.p2f_loss_weight,
         "use_class_weights": args.use_class_weights,
         "anchor_pool": args.anchor_pool,
-        "label_smoothing": args.label_smoothing,
-        "min_unique_val_preds": args.min_unique_val_preds,
         "freeze_ecg": not args.unfreeze_ecg,
         "best_val_loss": best_val,
         "best_epoch": best_epoch + 1 if best_epoch >= 0 else None,
@@ -758,8 +717,6 @@ if __name__ == "__main__":
     p.add_argument("--early_stop_patience", type=int, default=EARLY_STOP_PATIENCE)
     p.add_argument("--early_stop_min_delta", type=float, default=EARLY_STOP_MIN_DELTA)
     p.add_argument("--max_grad_norm", type=float, default=MAX_GRAD_NORM)
-    p.add_argument("--label_smoothing", type=float, default=LABEL_SMOOTHING)
-    p.add_argument("--min_unique_val_preds", type=int, default=MIN_UNIQUE_VAL_PREDS)
     a = p.parse_args()
     if not a.max_samples:
         a.max_samples = 0

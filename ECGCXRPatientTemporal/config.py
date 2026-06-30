@@ -13,6 +13,10 @@ PROJECT_ROOT = EXP_DIR.parent
 CXR_CATALOG_CSV = str(PROJECT_ROOT / "data" / "p2f_or_s2f_cxr_catalog.csv")
 # ECG catalog: subject_id, ..., wf_Base_Time, wf_File_Path, wf_File_Name
 ECG_CATALOG_CSV = str(PROJECT_ROOT / "data" / "p2f_or_s2f_ecg_catalog.csv")
+# Full non-EHR-restricted catalogs produced by build_full_catalogs.py.  Use these
+# via --cxr_csv/--ecg_csv when rebuilding pairs for the contrastive-only study.
+FULL_CXR_CATALOG_CSV = str(PROJECT_ROOT / "data" / "ecg_cxr_full_cxr_catalog.csv")
+FULL_ECG_CATALOG_CSV = str(PROJECT_ROOT / "data" / "ecg_cxr_full_ecg_catalog.csv")
 
 # MIMIC-CXR-JPG image root + metadata (dicom_id -> study_id for path building)
 CXR_ROOT = "/hpc/group/kamaleswaranlab/mimic_cxr/mimic_cxr_jpg"
@@ -56,7 +60,9 @@ OUTPUT_DIR = str(EXP_DIR / "output")
 # ---------------------------------------------------------------------------
 # Sequence pair-building parameters (Experiments 3 & 4), maximal-coverage.
 # ---------------------------------------------------------------------------
-# Exp 3 (no CXR_t1): ECGs in [t2 - SEQ_LOOKBACK_HOURS, t2) -> CXR_t2.
+# Exp 3 (no CXR_t1): ECGs in [t2 - SEQ_LOOKBACK_HOURS, t2 - SEQ_MIN_HORIZON_HOURS]
+# -> CXR_t2.
+SEQ_MIN_HORIZON_HOURS = 12.0
 SEQ_LOOKBACK_HOURS = 24.0
 # Exp 4 (with CXR_t1): pick prior CXR_t1 with t2 - t1 in [MIN, MAX], ECGs in (t1, t2].
 MIN_INTERVAL_HOURS = 3.0          # t2 - t1 lower bound (relaxed from 12 for max coverage)

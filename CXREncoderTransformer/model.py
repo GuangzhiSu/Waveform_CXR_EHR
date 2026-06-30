@@ -13,9 +13,12 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 from models.encoders.cxr import CXREncoder
 
-from blocks_cxrgen import EncoderBlock, PositionalEmbedding, build_combined_attn_mask
+from blocks_cxrgen import EncoderBlock, PositionalEmbedding
 
-_LOGIT_CLAMP = 30.0
+
+def _build_causal_mask(t: int, device: torch.device) -> torch.Tensor:
+    """Bool mask for nn.MultiheadAttention (True = disallow attention)."""
+    return torch.triu(torch.ones(t, t, device=device, dtype=torch.bool), diagonal=1)
 
 
 def _change_cls_head(d_model: int, num_classes: int, dropout: float) -> nn.Sequential:
@@ -54,7 +57,6 @@ class CXREncoderTransformer(nn.Module):
         self.d_model = d_model
         self.num_classes = num_classes
         self.anchor_pool = anchor_pool
-        self.freeze_cxr = freeze_cxr
         self.include_anchor_slot = include_anchor_slot
         if anchor_pool not in ("last", "mean"):
             raise ValueError("anchor_pool must be 'last' or 'mean'")
@@ -77,16 +79,8 @@ class CXREncoderTransformer(nn.Module):
             ]
         )
         self.enc_norm = nn.LayerNorm(d_model)
-        # Residual path: mean-pooled CXR timesteps (linear probe works; deep stack can collapse).
-        self.skip_proj = nn.Linear(d_model, d_model)
         self.head_s2f = _change_cls_head(d_model, num_classes, head_dropout)
         self.head_p2f = _change_cls_head(d_model, num_classes, head_dropout)
-
-    def _encode_flat(self, flat: torch.Tensor) -> torch.Tensor:
-        if self.freeze_cxr:
-            with torch.no_grad():
-                return self.cxr_enc(flat)
-        return self.cxr_enc(flat)
 
     def _pool_anchor(self, h: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         """Pool anchor representation from transformer output h (B, T, D)."""
@@ -101,10 +95,6 @@ class CXREncoderTransformer(nn.Module):
             last_idx = torch.where(has_any, last_idx, torch.zeros_like(last_idx))
             batch_idx = torch.arange(h.size(0), device=h.device, dtype=torch.long)
             return h[batch_idx, last_idx]
-        denom = mask.float().sum(dim=1, keepdim=True).clamp(min=1.0)
-        return (h * mask.unsqueeze(-1).float()).sum(dim=1) / denom
-
-    def _mean_pool_timesteps(self, h: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         denom = mask.float().sum(dim=1, keepdim=True).clamp(min=1.0)
         return (h * mask.unsqueeze(-1).float()).sum(dim=1) / denom
 
@@ -125,7 +115,7 @@ class CXREncoderTransformer(nn.Module):
         flat_mask = cxr_mask.reshape(-1)
         z = self.miss_cxr.view(1, 1, -1).expand(bsz, t, -1).clone()
         if flat_mask.any():
-            enc_out = self._encode_flat(flat[flat_mask])
+            enc_out = self.cxr_enc(flat[flat_mask])
             enc_out = torch.nan_to_num(enc_out, nan=0.0, posinf=0.0, neginf=0.0)
             z.reshape(-1, self.cxr_dim)[flat_mask] = enc_out
 
@@ -142,28 +132,20 @@ class CXREncoderTransformer(nn.Module):
         h = self.pos(h)
         h = self.pos_drop(h)
 
-        # PyTorch MHA yields NaN when every token is key-padded for a row (all CXR loads failed).
         safe_mask = cxr_mask.clone()
         all_invalid = ~safe_mask.any(dim=1)
         if all_invalid.any():
             safe_mask[all_invalid, 0] = True
         pad = ~safe_mask.bool()
-        attn_mask = build_combined_attn_mask(pad, causal=True)
+        caus = _build_causal_mask(t, device)
         for layer in self.layers:
-            h = layer(h, attn_mask=attn_mask)
+            h = layer(h, key_padding_mask=pad, attn_mask=caus)
         h = self.enc_norm(h)
         h = torch.nan_to_num(h, nan=0.0, posinf=0.0, neginf=0.0)
 
         anchor_vec = self._pool_anchor(h, cxr_mask)
-        if self.include_anchor_slot:
-            h_cxr = h[:, :-1, :]
-            mask_cxr = cxr_mask[:, :-1]
-        else:
-            h_cxr = h
-            mask_cxr = cxr_mask
-        anchor_vec = anchor_vec + self.skip_proj(self._mean_pool_timesteps(h_cxr, mask_cxr))
-        log_s = self.head_s2f(anchor_vec).clamp(-_LOGIT_CLAMP, _LOGIT_CLAMP)
-        log_p = self.head_p2f(anchor_vec).clamp(-_LOGIT_CLAMP, _LOGIT_CLAMP)
+        log_s = self.head_s2f(anchor_vec)
+        log_p = self.head_p2f(anchor_vec)
         if return_anchor_vec:
             return log_s, log_p, anchor_vec
         return log_s, log_p

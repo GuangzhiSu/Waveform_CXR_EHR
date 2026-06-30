@@ -126,7 +126,6 @@ def _train_mini(
     p2f_class_weight: Optional[torch.Tensor],
     grad_clip: float,
     use_rollback: bool,
-    label_smoothing: float = 0.0,
 ) -> dict:
     opt = torch.optim.AdamW(
         [p for p in model.parameters() if p.requires_grad], lr=lr, weight_decay=1e-3
@@ -135,7 +134,6 @@ def _train_mini(
         p2f_loss_weight=p2f_loss_weight,
         s2f_class_weight=s2f_class_weight,
         p2f_class_weight=p2f_class_weight,
-        label_smoothing=label_smoothing,
     )
     n_skipped_loss = n_skipped_grad = n_rollback = 0
     epoch_hist = []
@@ -239,19 +237,9 @@ def _passes(res: dict) -> bool:
     )
 
 
-def _new_model(
-    ckpt: Optional[str],
-    device: torch.device,
-    *,
-    anchor_pool: str = "mean",
-) -> ECGEncoderTransformer:
+def _new_model(ckpt: Optional[str], device: torch.device) -> ECGEncoderTransformer:
     ecg_dim = 1024 if ckpt and ckpt.endswith(".ckpt") else 512
-    return ECGEncoderTransformer(
-        ecg_ckpt_path=ckpt,
-        ecg_dim=ecg_dim,
-        freeze_ecg=True,
-        anchor_pool=anchor_pool,
-    ).to(device)
+    return ECGEncoderTransformer(ecg_ckpt_path=ckpt, ecg_dim=ecg_dim, freeze_ecg=True).to(device)
 
 
 def run_experiments(args) -> dict:
@@ -277,7 +265,6 @@ def run_experiments(args) -> dict:
             p2f_class_weight=p2f_w,
             grad_clip=5.0,
             use_rollback=False,
-            anchor_pool="last",
         ),
         "B_mild_loss": dict(
             lr=5e-4,
@@ -286,7 +273,6 @@ def run_experiments(args) -> dict:
             p2f_class_weight=None,
             grad_clip=5.0,
             use_rollback=False,
-            anchor_pool="last",
         ),
         "C_low_lr": dict(
             lr=1e-4,
@@ -295,16 +281,14 @@ def run_experiments(args) -> dict:
             p2f_class_weight=None,
             grad_clip=1.0,
             use_rollback=False,
-            anchor_pool="last",
         ),
-        "D_low_lr_last_pool": dict(
+        "D_combined_mask_is_default": dict(
             lr=1e-4,
             p2f_loss_weight=1.0,
             s2f_class_weight=None,
             p2f_class_weight=None,
             grad_clip=1.0,
             use_rollback=False,
-            anchor_pool="last",
         ),
         "E_stable_with_rollback": dict(
             lr=1e-4,
@@ -313,17 +297,6 @@ def run_experiments(args) -> dict:
             p2f_class_weight=None,
             grad_clip=1.0,
             use_rollback=True,
-            anchor_pool="last",
-        ),
-        "F_causal_mean_pool": dict(
-            lr=1e-4,
-            p2f_loss_weight=1.0,
-            s2f_class_weight=None,
-            p2f_class_weight=None,
-            grad_clip=1.0,
-            use_rollback=True,
-            label_smoothing=0.05,
-            anchor_pool="mean",
         ),
     }
 
@@ -335,11 +308,9 @@ def run_experiments(args) -> dict:
         "experiments": {},
     }
 
-    for name, spec in specs.items():
+    for name, kw in specs.items():
         print(f"\n=== {name} ===")
-        kw = dict(spec)
-        anchor_pool = kw.pop("anchor_pool", "mean")
-        model = _new_model(ckpt, device, anchor_pool=anchor_pool)
+        model = _new_model(ckpt, device)
         res = _train_mini(model, train_loader, val_loader, device, epochs=args.epochs, **kw)
         res["pass"] = _passes(res)
         results["experiments"][name] = res

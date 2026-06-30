@@ -115,11 +115,6 @@ def _build_loaders(args, device: torch.device):
     idx_train, idx_val, idx_test = stratified_train_val_test_indices(
         y, args.train_split, args.val_split, test_split, args.seed
     )
-    if isinstance(full_ds, Subset):
-        _map = np.asarray(full_ds.indices, dtype=np.int64)
-        idx_train_base = _map[idx_train]
-    else:
-        idx_train_base = idx_train
     train_ds, val_ds, _, _ = _make_split_datasets(full_ds, idx_train, idx_val, idx_test)
     train_loader = DataLoader(
         train_ds,
@@ -136,8 +131,8 @@ def _build_loaders(args, device: torch.device):
         num_workers=args.num_workers,
         collate_fn=collate_cxr_window_batch,
     )
-    s2f_w = _head_class_weights(base, idx_train_base, "anchor_has_s2f", "anchor_s2f_cls", 3, device)
-    return train_loader, val_loader, base, idx_train_base, s2f_w
+    s2f_w = _head_class_weights(base, idx_train, "anchor_has_s2f", "anchor_s2f_cls", 3, device)
+    return train_loader, val_loader, base, idx_train, s2f_w
 
 
 def _train_mini(
@@ -160,8 +155,6 @@ def _train_mini(
     for epoch in range(epochs):
         model.train()
         for batch in train_loader:
-            if batch is None:
-                continue
             b = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
             if batch_transform is not None:
                 b = batch_transform(b)
@@ -184,8 +177,6 @@ def _train_mini(
             pred_hist = np.zeros(3, dtype=np.int64)
             with torch.no_grad():
                 for batch in val_loader:
-                    if batch is None:
-                        continue
                     b = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
                     if batch_transform is not None:
                         b = batch_transform(b)
@@ -218,8 +209,6 @@ def _train_mini(
     model.eval()
     with torch.no_grad():
         for batch in val_loader:
-            if batch is None:
-                continue
             b = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
             if batch_transform is not None:
                 b = batch_transform(b)
@@ -336,8 +325,6 @@ def run_experiments(args) -> dict:
     y_true, y_pred_shuf, y_pred_real = [], [], []
     with torch.no_grad():
         for batch in val_loader:
-            if batch is None:
-                continue
             b = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
             log_s, _ = model_b(b["cxr_seq"], b["cxr_mask"])
             b_shuf = _shuffle_images_batch(b)

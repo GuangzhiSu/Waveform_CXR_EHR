@@ -33,9 +33,6 @@ def stratify_labels_from_anchor(
 
 
 def collate_cxr_window_batch(batch):
-    batch = [b for b in batch if b["cxr_mask"].any()]
-    if not batch:
-        return None
     lengths = [b["cxr_seq"].shape[0] for b in batch]
     max_len = max(lengths)
     bsz = len(batch)

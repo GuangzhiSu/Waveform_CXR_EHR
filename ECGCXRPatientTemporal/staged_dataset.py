@@ -10,6 +10,8 @@ works for all experiments:
 
   patient_id, c2_row (gallery dedup id), c2 (target CXR feat),
   ecg_feats (L, D_ecg), ecg_t2t (L,)  [hours from each ECG to the target CXR],
+  ecg_times_h (L,)                    [absolute ECG times in dataset hours],
+  c2_time_h                           [absolute target CXR time in dataset hours],
   delta_t (scalar, hours)             [single: that ECG's horizon; sequence: t2 - t1],
   c1 (D_cxr)                          [sequence only].
 
@@ -72,6 +74,8 @@ class StagedData:
                     "c2": int(c),
                     "ecg_rows": [int(e)],
                     "ecg_t2t": [float(p["delta_h"])],      # ECG -> target horizon
+                    "ecg_times_h": [float(p["ecg_time_h"])],
+                    "c2_time_h": float(p["cxr_time_h"]),
                     "delta_t": float(p["delta_h"]),
                     "c1": None,
                 })
@@ -86,14 +90,16 @@ class StagedData:
                     c1 = cxr_idx.get(p["cxr_t1"])
                     if c1 is None:
                         continue
-                e_rows, e_t2t = [], []
+                e_rows, e_t2t, e_abs = [], [], []
                 t2 = float(p["t2_h"])
                 for eid, et in zip(p["ecg_ids"], p["ecg_times_h"]):
                     r = ecg_idx.get(eid)
                     if r is None:
                         continue
                     e_rows.append(int(r))
-                    e_t2t.append(t2 - float(et))            # hours from ECG to target CXR_t2
+                    et = float(et)
+                    e_t2t.append(t2 - et)                   # hours from ECG to target CXR_t2
+                    e_abs.append(et)
                 if not e_rows:
                     continue
                 # Prediction horizon: builder-provided delta_h (t2 - t1 for Exp4,
@@ -104,6 +110,8 @@ class StagedData:
                     "c2": int(c2),
                     "ecg_rows": e_rows,
                     "ecg_t2t": e_t2t,
+                    "ecg_times_h": e_abs,
+                    "c2_time_h": t2,
                     "delta_t": delta,
                     "c1": int(c1) if c1 is not None else None,
                 })
@@ -174,17 +182,19 @@ class StagedDataset(Dataset):
     def _ecg_from(self, pair) -> tuple:
         rows = np.asarray(pair["ecg_rows"], dtype=np.int64)
         t2t = np.asarray(pair["ecg_t2t"], dtype=np.float64)
+        times = np.asarray(pair["ecg_times_h"], dtype=np.float64)
         order = np.argsort(-t2t)  # furthest-from-target first -> chronological order
-        rows, t2t = rows[order], t2t[order]
+        rows, t2t, times = rows[order], t2t[order], times[order]
         feats = torch.from_numpy(self.data.ecg_emb[rows].astype(np.float32))  # (L, D)
-        return feats, torch.from_numpy(t2t.astype(np.float32))               # (L,)
+        return (feats, torch.from_numpy(t2t.astype(np.float32)),
+                torch.from_numpy(times.astype(np.float32)))                 # (L,)
 
     def __getitem__(self, i: int):
         pair = self.data.pairs[self.indices[i]]
         ecg_src = pair
         if self.ecg_perturb == "shuffle":
             ecg_src = self.data.pairs[self.indices[int(self._donor[i])]]
-        ecg_feats, ecg_t2t = self._ecg_from(ecg_src)
+        ecg_feats, ecg_t2t, ecg_times = self._ecg_from(ecg_src)
 
         item = {
             "patient_id": pair["patient_id"],
@@ -192,6 +202,8 @@ class StagedDataset(Dataset):
             "c2": torch.from_numpy(self.data.cxr_emb[pair["c2"]].astype(np.float32)),
             "ecg_feats": ecg_feats,
             "ecg_t2t": ecg_t2t,
+            "ecg_times_h": ecg_times,
+            "c2_time_h": float(pair["c2_time_h"]),
             "delta_t": float(pair["delta_t"]),
         }
         if self.has_c1 and pair["c1"] is not None:
@@ -205,11 +217,13 @@ def collate_fn(batch: list) -> dict:
     D_ecg = batch[0]["ecg_feats"].shape[1]
     ecg = torch.zeros(B, Lmax, D_ecg)
     t2t = torch.zeros(B, Lmax)
+    ecg_times = torch.zeros(B, Lmax)
     mask = torch.zeros(B, Lmax, dtype=torch.bool)
     for i, b in enumerate(batch):
         L = b["ecg_feats"].shape[0]
         ecg[i, :L] = b["ecg_feats"]
         t2t[i, :L] = b["ecg_t2t"]
+        ecg_times[i, :L] = b["ecg_times_h"]
         mask[i, :L] = True
     out = {
         "patient_id": torch.tensor([b["patient_id"] for b in batch], dtype=torch.long),
@@ -217,7 +231,9 @@ def collate_fn(batch: list) -> dict:
         "c2": torch.stack([b["c2"] for b in batch]),
         "ecg_feats": ecg,
         "ecg_t2t": t2t,
+        "ecg_times_h": ecg_times,
         "ecg_mask": mask,
+        "c2_time_h": torch.tensor([b["c2_time_h"] for b in batch], dtype=torch.float32),
         "delta_t": torch.tensor([b["delta_t"] for b in batch], dtype=torch.float32),
     }
     if "c1" in batch[0]:

@@ -39,7 +39,7 @@ TABLE_COLUMNS = [
     "experiment_name", "input_type", "target_window",
     "uses_cxr_t1", "uses_single_ecg", "uses_ecg_sequence",
     "uses_predictor_g", "uses_transformer", "uses_future_query",
-    "ecg_perturb", "loss_type", "lambda_temporal",
+    "ecg_perturb", "fusion_mode", "loss_type", "lambda_temporal",
     "cross_patient_recall@1", "cross_patient_recall@5", "cross_patient_recall@10",
     "cross_patient_mrr", "cross_patient_median_rank",
     "within_patient_temporal_recall@1", "within_patient_temporal_recall@5",
@@ -113,11 +113,12 @@ def _fmt(v):
 
 
 def _pretty_print(rows: list):
-    cols = ["experiment_name", "input_type", "uses_cxr_t1", "ecg_perturb",
+    cols = ["experiment_name", "input_type", "uses_cxr_t1", "ecg_perturb", "fusion_mode",
             "cross_patient_recall@1", "cross_patient_recall@5", "cross_patient_mrr",
             "within_patient_temporal_recall@1", "within_patient_temporal_mrr"]
     short = {"experiment_name": "experiment", "input_type": "input",
              "uses_cxr_t1": "cxr1", "ecg_perturb": "perturb",
+             "fusion_mode": "fusion",
              "cross_patient_recall@1": "xR@1", "cross_patient_recall@5": "xR@5",
              "cross_patient_mrr": "xMRR", "within_patient_temporal_recall@1": "tR@1",
              "within_patient_temporal_mrr": "tMRR"}
@@ -157,10 +158,22 @@ def build_args():
     ap.add_argument("--lr", type=float, default=C.LR)
     ap.add_argument("--weight_decay", type=float, default=C.WEIGHT_DECAY)
     ap.add_argument("--max_grad_norm", type=float, default=C.MAX_GRAD_NORM)
+    ap.add_argument("--loss_mode_override", default=None, choices=["cross", "temporal", "combined"],
+                    help="Override each selected spec's loss_mode.")
+    ap.add_argument("--lambda_temporal_override", type=float, default=None,
+                    help="Override each selected spec's temporal loss weight.")
+    ap.add_argument("--init_from", default=None,
+                    help="Optional checkpoint for compatible-key warm-start.")
+    ap.add_argument("--freeze_cxr_base", action="store_true",
+                    help="Freeze cxr_proj and g after optional warm-start.")
     ap.add_argument("--seed", type=int, default=C.SEED)
     ap.add_argument("--eval_batch_size", type=int, default=256)
     ap.add_argument("--early_stop_patience", type=int, default=C.EARLY_STOP_PATIENCE)
     ap.add_argument("--device", default="auto")
+    ap.add_argument("--dynamics_log_every", type=int, default=1,
+                    help="Record batch R@1/R@5 every N optimizer steps.")
+    ap.add_argument("--no_train_dynamics", action="store_true",
+                    help="Disable per-iteration train dynamics CSV/JSON/PNG outputs.")
     return ap.parse_args()
 
 

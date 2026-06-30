@@ -17,6 +17,7 @@ leaning on a CXR_t1 shortcut.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from typing import Optional
 
 
 @dataclass
@@ -37,10 +38,13 @@ class ExperimentSpec:
     ecg_pool: str = "mean"         # "mean" | "cls" | "query"
     ecg_proj_kind: str = "linear"  # single-ECG projector: "linear" | "mlp"
     ecg_perturb: str = "none"      # "none" | "zero" | "shuffle"  (shortcut controls)
+    fusion_mode: str = "mlp_concat"  # "mlp_concat" | "cross_attention_norm" | "add_norm" | "weighted_attn_pool"
 
     # ---- loss ---------------------------------------------------------------
     loss_mode: str = "combined"    # "cross" | "temporal" | "combined"
     lambda_temporal: float = 0.2
+    temporal_min_horizon_hours: Optional[float] = None
+    temporal_max_horizon_hours: Optional[float] = None
 
     # -------------------------------------------------------------------------
     def data_kind(self) -> str:
@@ -60,6 +64,7 @@ class ExperimentSpec:
             "uses_transformer": self.use_transformer,
             "uses_future_query": self.use_future_query,
             "ecg_perturb": self.ecg_perturb,
+            "fusion_mode": self.fusion_mode,
             "loss_type": self.loss_mode,
             "lambda_temporal": self.lambda_temporal if self.loss_mode != "cross" else 0.0,
         }
@@ -95,6 +100,7 @@ def default_registry() -> "list[ExperimentSpec]":
         use_predictor_g=False, use_time_embedding=False,
         use_transformer=False, use_future_query=False, ecg_proj_kind="mlp",
         loss_mode="cross", lambda_temporal=0.0,
+        temporal_min_horizon_hours=9.0, temporal_max_horizon_hours=15.0,
     ))
 
     # Step 2 -- Experiment 1B: single ECG -> future CXR, cross + 0.2 temporal.
@@ -106,6 +112,7 @@ def default_registry() -> "list[ExperimentSpec]":
         use_predictor_g=False, use_time_embedding=False,
         use_transformer=False, use_future_query=False, ecg_proj_kind="mlp",
         loss_mode="combined", lambda_temporal=0.2,
+        temporal_min_horizon_hours=9.0, temporal_max_horizon_hours=15.0,
     ))
 
     # Step 3 -- Experiment 2: single ECG + predictor g(., delta_t) -> future CXR.
@@ -117,28 +124,31 @@ def default_registry() -> "list[ExperimentSpec]":
         use_predictor_g=True, use_time_embedding=True,
         use_transformer=False, use_future_query=False, ecg_proj_kind="linear",
         loss_mode="combined", lambda_temporal=0.2,
+        temporal_min_horizon_hours=9.0, temporal_max_horizon_hours=15.0,
     ))
 
     # Step 4 -- Experiment 3A: sequential ECG -> future CXR, mean pooling.
     specs.append(ExperimentSpec(
         name="exp3a_seq_ecg_meanpool",
-        description="ECG sequence (24h lookback, no CXR_t1) -> Transformer -> mean pool -> g -> CXR_t2.",
-        pairs_kind="seq_target", target_window="<=24h lookback",
+        description="ECG sequence (12-24h before CXR_t2, no CXR_t1) -> Transformer -> mean pool -> g -> CXR_t2.",
+        pairs_kind="seq_target", target_window="12-24h before CXR_t2",
         use_cxr_t1=False, use_ecg=True, ecg_mode="sequence",
         use_predictor_g=True, use_time_embedding=True,
         use_transformer=True, use_future_query=False, ecg_pool="mean",
         loss_mode="combined", lambda_temporal=0.2,
+        temporal_min_horizon_hours=12.0, temporal_max_horizon_hours=24.0,
     ))
 
     # Step 5 -- Experiment 3B: sequential ECG + learnable future query.
     specs.append(ExperimentSpec(
         name="exp3b_seq_ecg_future_query",
-        description="ECG sequence (24h lookback, no CXR_t1) + learnable future-time query -> CXR_t2.",
-        pairs_kind="seq_target", target_window="<=24h lookback",
+        description="ECG sequence (12-24h before CXR_t2, no CXR_t1) + learnable future-time query -> CXR_t2.",
+        pairs_kind="seq_target", target_window="12-24h before CXR_t2",
         use_cxr_t1=False, use_ecg=True, ecg_mode="sequence",
         use_predictor_g=True, use_time_embedding=True,
         use_transformer=True, use_future_query=True, ecg_pool="query",
         loss_mode="combined", lambda_temporal=0.2,
+        temporal_min_horizon_hours=12.0, temporal_max_horizon_hours=24.0,
     ))
 
     # Step 6 -- Experiment 4: CXR_t1 + ECG sequence fusion, with shortcut controls.
@@ -194,6 +204,53 @@ def default_registry() -> "list[ExperimentSpec]":
         ecg_perturb="zero",
         loss_mode="combined", lambda_temporal=0.2,
     ))
+
+    # Follow-up fusion schemes requested after Exp4. All keep the same Exp4
+    # sample set and the same contrastive objective against CXR_t2.
+    specs.append(ExperimentSpec(
+        name="exp5a_proj_tx_crossattn_norm",
+        description=("Scheme 1: project CXR_t1 and ECG tokens to one dimension, "
+                     "ECG Transformer, CXR query cross-attends to ECG, normalized projection."),
+        pairs_kind="seq_t1", target_window="3-48h",
+        use_cxr_t1=True, use_ecg=True, ecg_mode="sequence",
+        use_predictor_g=True, use_time_embedding=True,
+        use_transformer=True, use_future_query=False, ecg_pool="mean",
+        fusion_mode="cross_attention_norm",
+        loss_mode="combined", lambda_temporal=0.2,
+    ))
+    specs.append(ExperimentSpec(
+        name="exp5b_proj_add_norm",
+        description=("Scheme 2: project CXR_t1 and pooled ECG sequence to one dimension, "
+                     "add them, then normalize projection."),
+        pairs_kind="seq_t1", target_window="3-48h",
+        use_cxr_t1=True, use_ecg=True, ecg_mode="sequence",
+        use_predictor_g=True, use_time_embedding=True,
+        use_transformer=True, use_future_query=False, ecg_pool="mean",
+        fusion_mode="add_norm",
+        loss_mode="combined", lambda_temporal=0.2,
+    ))
+    specs.append(ExperimentSpec(
+        name="exp5c_weighted_attn_pool",
+        description=("Scheme 3: single-linear weighted attentive pooling over CXR_t1 "
+                     "and ECG Transformer tokens, then normalized projection."),
+        pairs_kind="seq_t1", target_window="3-48h",
+        use_cxr_t1=True, use_ecg=True, ecg_mode="sequence",
+        use_predictor_g=True, use_time_embedding=True,
+        use_transformer=True, use_future_query=False, ecg_pool="mean",
+        fusion_mode="weighted_attn_pool",
+        loss_mode="combined", lambda_temporal=0.2,
+    ))
+    specs.append(ExperimentSpec(
+        name="exp6a_cxr_residual_ecg",
+        description=("CXR_t1 base predictor plus a gated ECG residual. Intended to "
+                     "warm-start from CXR-only and test whether ECG improves the CXR_t1 shortcut."),
+        pairs_kind="seq_t1", target_window="3-48h",
+        use_cxr_t1=True, use_ecg=True, ecg_mode="sequence",
+        use_predictor_g=True, use_time_embedding=True,
+        use_transformer=True, use_future_query=False, ecg_pool="mean",
+        fusion_mode="cxr_residual_ecg",
+        loss_mode="combined", lambda_temporal=0.2,
+    ))
     return specs
 
 
@@ -206,6 +263,9 @@ STEP_GROUPS = {
     "step3": ["exp3a_seq_ecg_meanpool", "exp3b_seq_ecg_future_query"],
     "step4": ["exp4c_fusion_cxr1_ecgseq", "exp4a_ecg_only", "exp4b_cxr_only",
               "exp4d_fusion_shuffled_ecg", "exp4e_fusion_zeroed_ecg"],
+    "fusion_schemes": ["exp5a_proj_tx_crossattn_norm", "exp5b_proj_add_norm",
+                       "exp5c_weighted_attn_pool"],
+    "improve": ["exp5c_weighted_attn_pool", "exp6a_cxr_residual_ecg"],
 }
 ALL_IN_ORDER = (STEP_GROUPS["step1"] + STEP_GROUPS["step2"]
                 + STEP_GROUPS["step3"] + STEP_GROUPS["step4"])

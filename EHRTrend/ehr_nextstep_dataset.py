@@ -54,7 +54,7 @@ class EHRNextStepDataset(Dataset):
         enriched_csv: Optional[str] = None,
         lookback_min_hours: int = 12,
         lookback_max_hours: int = 24,
-        include_anchor_row: bool = False,
+        include_anchor_row: bool = True,
     ):
         self.include_anchor_row = include_anchor_row
         main = pd.read_csv(anchor_source_csv, low_memory=False)

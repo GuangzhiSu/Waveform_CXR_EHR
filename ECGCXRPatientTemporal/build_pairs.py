@@ -44,7 +44,8 @@ def _hours(ns: np.ndarray) -> np.ndarray:
     return ns.astype(np.float64) / _HOUR_NS
 
 
-def load_cxr_nodes(cxr_csv: str, metadata_path: str, cxr_root: str) -> dict:
+def load_cxr_nodes(cxr_csv: str, metadata_path: str, cxr_root: str,
+                   min_cxrs: int = 2, check_paths: bool = True) -> dict:
     """patient_id -> list of CXR nodes sorted by time: {dicom_id, t_h, path}."""
     df = pd.read_csv(cxr_csv, low_memory=False)
     df["subject_id"] = pd.to_numeric(df["subject_id"], errors="coerce")
@@ -78,7 +79,7 @@ def load_cxr_nodes(cxr_csv: str, metadata_path: str, cxr_root: str) -> dict:
             study_id = row.get("study_id", np.nan)
             path = get_cxr_path(row["dicom_id"], int(sid), study_id, cxr_root)
             n_total += 1
-            ok = bool(path and os.path.isfile(path))
+            ok = bool(path and os.path.isfile(path)) if check_paths else bool(path)
             if ok:
                 n_pathok += 1
             seq.append({
@@ -87,9 +88,11 @@ def load_cxr_nodes(cxr_csv: str, metadata_path: str, cxr_root: str) -> dict:
                 "path": path,
                 "path_ok": ok,
             })
-        if len(seq) >= 2:
+        if len(seq) >= min_cxrs:
             nodes[int(sid)] = seq
-    print(f"  CXR nodes: patients(>=2 CXR)={len(nodes):,}  path_on_disk={n_pathok:,}/{n_total:,}")
+    label = "path_on_disk" if check_paths else "path_assumed"
+    print(f"  CXR nodes: patients(>={min_cxrs} CXR)={len(nodes):,}  "
+          f"{label}={n_pathok:,}/{n_total:,}")
     return nodes
 
 
@@ -186,10 +189,13 @@ def main() -> int:
     ap.add_argument("--ecg_after_hours", type=float, default=C.ECG_WINDOW_AFTER_HOURS)
     ap.add_argument("--require_cxr_on_disk", action="store_true",
                     help="Drop pairs whose CXR jpg is not present on disk.")
+    ap.add_argument("--skip_cxr_path_check", action="store_true",
+                    help="Do not os.stat every CXR during pair building; assume constructed paths exist.")
     args = ap.parse_args()
 
     print("=== build_pairs: patient-temporal (CXR_t1, ECG_interval, CXR_t2) ===")
-    cxr_nodes = load_cxr_nodes(args.cxr_csv, args.metadata_path, args.cxr_root)
+    cxr_nodes = load_cxr_nodes(args.cxr_csv, args.metadata_path, args.cxr_root,
+                               check_paths=not args.skip_cxr_path_check)
     ecg_nodes = load_ecg_nodes(args.ecg_csv)
     pairs, cxr_meta, ecg_meta = build_pairs(cxr_nodes, ecg_nodes, args)
 

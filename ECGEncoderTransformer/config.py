@@ -48,7 +48,7 @@ NUM_TRANSFORMER_LAYERS = 4
 NUM_HEADS = 4
 DROPOUT = 0.1
 HEAD_DROPOUT = 0.2
-ANCHOR_POOL = "mean"
+ANCHOR_POOL = "last"
 MAX_SEQ_LENGTH = 512
 FREEZE_ECG = True
 
@@ -65,10 +65,8 @@ NUM_WORKERS = 4
 EARLY_STOP_PATIENCE = 10
 EARLY_STOP_MIN_DELTA = 1e-4
 MAX_GRAD_NORM = 1.0
-LABEL_SMOOTHING = 0.05
-MIN_UNIQUE_VAL_PREDS = 2
-# Append learnable anchor slot after lookback ECGs (classification pools ECG tokens by default).
+# Append learnable anchor slot after lookback ECGs so last-pool = query at anchor t.
 INCLUDE_ANCHOR_SLOT = True
 P2F_LOSS_WEIGHT = 1.0
-USE_CLASS_WEIGHTS = False
+USE_CLASS_WEIGHTS = True
 OUTPUT_DIR = str(EXP_DIR / "output")

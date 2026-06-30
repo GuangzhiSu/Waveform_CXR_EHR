@@ -268,7 +268,7 @@ def build_ecg_encoder_from_ckpt(
             dim = 1024 if hidden_dim < 1024 else hidden_dim
             enc = SymileECGEncoder(
                 hidden_dim=dim,
-                target_time=sig_len,
+                target_time=5000,
                 pretrained_resnet=False,
                 freeze=freeze,
                 ckpt_path=ckpt_path,

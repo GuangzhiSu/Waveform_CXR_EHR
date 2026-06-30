@@ -74,6 +74,7 @@ class StagedModel(nn.Module):
         self.spec = spec
         self.proj_dim = proj_dim
         self.d_model = d_model
+        self.fusion_mode = getattr(spec, "fusion_mode", "mlp_concat")
 
         # Shared CXR projection (used for c_t1, c_t2 and the retrieval gallery).
         self.cxr_proj = CXRProjection(cxr_dim, cxr_proj_hidden, proj_dim, dropout)
@@ -120,18 +121,69 @@ class StagedModel(nn.Module):
                     if spec.use_time_embedding:
                         self.future_time_emb = TimeEmbedding(d_model)
                 ecg_out_dim = d_model
+        self.ecg_out_dim = ecg_out_dim
 
         # ---- query head ----------------------------------------------------
         g_in = (proj_dim if spec.use_cxr_t1 else 0) + ecg_out_dim
         self.g_in = g_in
-        if spec.use_predictor_g:
-            assert g_in > 0, "predictor g needs at least one input component"
-            self.g = MLP(g_in, fusion_hidden, proj_dim, dropout)
+        self.g = None
+
+        # Extra fusion heads for the requested Exp4 follow-ups. The default
+        # ``mlp_concat`` path below is the original implementation.
+        self.cxr_token_proj = None
+        self.cross_attn = None
+        self.cross_attn_norm = None
+        self.cross_ff = None
+        self.cross_ff_norm = None
+        self.cross_out = None
+        self.add_norm = None
+        self.add_out = None
+        self.pool_score = None
+        self.pool_norm = None
+        self.pool_out = None
+        self.residual_score = None
+        self.residual_delta = None
+        self.residual_scale = None
+
+        if self.fusion_mode == "mlp_concat":
+            if spec.use_predictor_g:
+                assert g_in > 0, "predictor g needs at least one input component"
+                self.g = MLP(g_in, fusion_hidden, proj_dim, dropout)
+            else:
+                # No predictor: query must already be proj_dim and a single component.
+                assert g_in == proj_dim, (
+                    f"without predictor g the query dim must equal proj_dim ({proj_dim}), got {g_in}")
+        elif self.fusion_mode in {"cross_attention_norm", "add_norm", "weighted_attn_pool"}:
+            assert spec.use_cxr_t1 and spec.use_ecg and spec.ecg_mode == "sequence", (
+                f"fusion_mode={self.fusion_mode!r} expects CXR_t1 + ECG sequence inputs")
+            assert self.encoder is not None and self.ecg_in_proj is not None
+            self.cxr_token_proj = nn.Identity() if proj_dim == d_model else nn.Linear(proj_dim, d_model)
+            if self.fusion_mode == "cross_attention_norm":
+                self.cross_attn = nn.MultiheadAttention(
+                    d_model, ecg_tx_heads, dropout=dropout, batch_first=True)
+                self.cross_attn_norm = nn.LayerNorm(d_model)
+                self.cross_ff = MLP(d_model, int(d_model * ecg_tx_mlp_ratio), d_model, dropout)
+                self.cross_ff_norm = nn.LayerNorm(d_model)
+                self.cross_out = nn.Linear(d_model, proj_dim)
+            elif self.fusion_mode == "add_norm":
+                self.add_norm = nn.LayerNorm(d_model)
+                self.add_out = MLP(d_model, fusion_hidden, proj_dim, dropout)
+            else:  # weighted_attn_pool
+                self.pool_score = nn.Linear(d_model, 1)
+                self.pool_norm = nn.LayerNorm(d_model)
+                self.pool_out = nn.Linear(d_model, proj_dim)
+        elif self.fusion_mode == "cxr_residual_ecg":
+            assert spec.use_cxr_t1 and spec.use_ecg and spec.ecg_mode == "sequence", (
+                "cxr_residual_ecg expects CXR_t1 + ECG sequence inputs")
+            assert self.encoder is not None and self.ecg_in_proj is not None
+            self.cxr_token_proj = nn.Identity() if proj_dim == d_model else nn.Linear(proj_dim, d_model)
+            # ``g`` intentionally matches the CXR-only model so it can be warm-started.
+            self.g = MLP(proj_dim, fusion_hidden, proj_dim, dropout)
+            self.residual_score = nn.Linear(d_model, 1)
+            self.residual_delta = MLP(proj_dim + d_model, fusion_hidden, proj_dim, dropout)
+            self.residual_scale = nn.Parameter(torch.tensor(-3.0, dtype=torch.float32))
         else:
-            # No predictor: query must already be proj_dim and a single component.
-            assert g_in == proj_dim, (
-                f"without predictor g the query dim must equal proj_dim ({proj_dim}), got {g_in}")
-            self.g = None
+            raise ValueError(f"Unknown fusion_mode={self.fusion_mode!r}")
 
         # ---- temperature ---------------------------------------------------
         self.learnable_temperature = learnable_temperature
@@ -148,7 +200,7 @@ class StagedModel(nn.Module):
     def _encode_sequence(self, batch) -> torch.Tensor:
         feats = batch["ecg_feats"]
         if self.spec.ecg_perturb == "zero":
-            feats = feats * 0.0
+            return feats.new_zeros(feats.size(0), self.ecg_out_dim)
         B = feats.size(0)
         h = self.ecg_in_proj(feats)
         if self.seq_time_emb is not None:
@@ -177,20 +229,84 @@ class StagedModel(nn.Module):
         m = mask.unsqueeze(-1).float()
         return (h * m).sum(dim=1) / m.sum(dim=1).clamp(min=1.0)
 
+    def _encode_sequence_tokens(self, batch) -> tuple[torch.Tensor, torch.Tensor]:
+        """Return Transformer ECG tokens and their validity mask for fusion heads."""
+        feats = batch["ecg_feats"]
+        mask = batch["ecg_mask"].bool()
+        if self.spec.ecg_perturb == "zero":
+            h = feats.new_zeros(feats.size(0), feats.size(1), self.d_model)
+            return h, mask
+        h = self.ecg_in_proj(feats)
+        if self.seq_time_emb is not None:
+            h = h + self.seq_time_emb(batch["ecg_t2t"])
+        h = self.encoder(h, src_key_padding_mask=~mask)
+        h = self.enc_norm(h)
+        h = torch.nan_to_num(h, nan=0.0, posinf=0.0, neginf=0.0)
+        return h, mask
+
+    @staticmethod
+    def _masked_mean(tokens: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        m = mask.unsqueeze(-1).float()
+        return (tokens * m).sum(dim=1) / m.sum(dim=1).clamp(min=1.0)
+
     def _ecg_vector(self, batch):
         if not self.spec.use_ecg:
             return None
         if self.spec.ecg_mode == "single":
             feats = batch["ecg_feats"][:, 0, :]  # (B, D_ecg), L == 1
             if self.spec.ecg_perturb == "zero":
-                feats = feats * 0.0
+                return feats.new_zeros(feats.size(0), self.ecg_out_dim)
             z = self.ecg_single_proj(feats)
             if self.single_time_emb is not None:
                 z = torch.cat([z, self.single_time_emb(batch["delta_t"])], dim=-1)
             return z
         return self._encode_sequence(batch)
 
+    def _special_fusion_query(self, batch, c1: torch.Tensor) -> torch.Tensor:
+        """Fusion modes for the three requested Exp4 follow-up architectures."""
+        ecg_tokens, mask = self._encode_sequence_tokens(batch)
+        c1_tok = self.cxr_token_proj(c1).unsqueeze(1)
+
+        if self.fusion_mode == "cross_attention_norm":
+            attn, _ = self.cross_attn(
+                c1_tok, ecg_tokens, ecg_tokens, key_padding_mask=~mask, need_weights=False)
+            h = self.cross_attn_norm(c1_tok + attn)
+            h = self.cross_ff_norm(h + self.cross_ff(h))
+            return F.normalize(self.cross_out(h.squeeze(1)), dim=-1)
+
+        if self.fusion_mode == "add_norm":
+            ecg_pool = self._masked_mean(ecg_tokens, mask)
+            h = self.add_norm(c1_tok.squeeze(1) + ecg_pool)
+            return F.normalize(self.add_out(h), dim=-1)
+
+        if self.fusion_mode == "weighted_attn_pool":
+            tokens = torch.cat([c1_tok, ecg_tokens], dim=1)
+            c1_mask = torch.ones(mask.size(0), 1, dtype=torch.bool, device=mask.device)
+            full_mask = torch.cat([c1_mask, mask], dim=1)
+            scores = self.pool_score(tokens).squeeze(-1).masked_fill(~full_mask, float("-inf"))
+            weights = torch.softmax(scores, dim=1)
+            h = (tokens * weights.unsqueeze(-1)).sum(dim=1)
+            h = self.pool_norm(h)
+            return F.normalize(self.pool_out(h), dim=-1)
+
+        if self.fusion_mode == "cxr_residual_ecg":
+            base = F.normalize(self.g(c1), dim=-1)
+            scores = self.residual_score(ecg_tokens).squeeze(-1).masked_fill(~mask, float("-inf"))
+            weights = torch.softmax(scores, dim=1)
+            ecg_pool = (ecg_tokens * weights.unsqueeze(-1)).sum(dim=1)
+            delta = F.normalize(self.residual_delta(torch.cat([c1, ecg_pool], dim=-1)), dim=-1)
+            scale = torch.sigmoid(self.residual_scale)
+            return F.normalize(base + scale * delta, dim=-1)
+
+        raise RuntimeError(f"_special_fusion_query called for fusion_mode={self.fusion_mode!r}")
+
     def encode(self, batch):
+        if self.fusion_mode != "mlp_concat":
+            c1 = self.cxr_proj(batch["c1"])
+            q = self._special_fusion_query(batch, c1)
+            c2 = self.cxr_proj(batch["c2"])
+            return q, c2, c1
+
         comps = []
         c1 = None
         if self.spec.use_cxr_t1:

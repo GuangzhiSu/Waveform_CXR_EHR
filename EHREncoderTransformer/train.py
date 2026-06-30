@@ -22,7 +22,6 @@ sys.path.insert(0, str(_EXP))
 from classification_utils import make_subset, stratified_train_val_test_indices  # noqa: E402
 from config import *  # noqa: F401,F403,E402
 from ehr_nextstep_dataset import EHRNextStepDataset  # noqa: E402
-from ehr_symile_dataset import EHRNextStepDatasetSymile  # noqa: E402
 from model import EHREncoderTransformer  # noqa: E402
 
 
@@ -31,45 +30,28 @@ def masked_ce(
     y: torch.Tensor,
     valid: torch.Tensor,
     class_weight: Optional[torch.Tensor] = None,
-    label_smoothing: float = 0.0,
 ) -> torch.Tensor:
     if not valid.any():
         return logits.new_tensor(0.0)
-    return F.cross_entropy(
-        logits[valid],
-        y[valid],
-        weight=class_weight,
-        label_smoothing=label_smoothing,
-    )
+    return F.cross_entropy(logits[valid], y[valid], weight=class_weight)
 
 
-def _class_weights_from_counts(
-    counts: np.ndarray,
-    num_classes: int,
-    device: torch.device,
-    mode: str,
-) -> Optional[torch.Tensor]:
-    if mode == "none":
-        return None
+def _inverse_freq_weights(counts: np.ndarray, num_classes: int, device: torch.device) -> torch.Tensor:
     c = np.bincount(counts, minlength=num_classes).astype(np.float64)
     c = np.maximum(c, 1.0)
-    if mode == "sqrt_inverse":
-        w = 1.0 / np.sqrt(c)
-    else:
-        w = 1.0 / c
+    w = 1.0 / c
     w = w * (num_classes / w.sum())
     return torch.tensor(w, dtype=torch.float32, device=device)
 
 
 def _head_class_weights(
-    ds: EHRNextStepDataset | EHRNextStepDatasetSymile,
+    ds: EHRNextStepDataset,
     indices: np.ndarray,
     has_attr: str,
     cls_attr: str,
     num_classes: int,
     device: torch.device,
-    mode: str = "inverse_freq",
-) -> Optional[torch.Tensor]:
+) -> torch.Tensor:
     has = getattr(ds, has_attr)
     cls = getattr(ds, cls_attr)
     labels = []
@@ -77,8 +59,8 @@ def _head_class_weights(
         if has[i] and cls[i] >= 0:
             labels.append(int(cls[i]))
     if not labels:
-        return None if mode == "none" else torch.ones(num_classes, device=device)
-    return _class_weights_from_counts(np.asarray(labels, dtype=np.int64), num_classes, device, mode)
+        return torch.ones(num_classes, device=device)
+    return _inverse_freq_weights(np.asarray(labels, dtype=np.int64), num_classes, device)
 
 
 def collate_anchor_batch(batch):
@@ -112,7 +94,7 @@ def collate_anchor_batch(batch):
     }
 
 
-def _stratify_labels_from_dataset(ds: EHRNextStepDataset | EHRNextStepDatasetSymile) -> np.ndarray:
+def _stratify_labels_from_dataset(ds: EHRNextStepDataset) -> np.ndarray:
     n = len(ds)
     y = np.zeros(n, dtype=np.int64)
     for i in range(n):
@@ -150,7 +132,6 @@ def forward_loss_parts(
     p2f_loss_weight: float = 1.0,
     s2f_class_weight: Optional[torch.Tensor] = None,
     p2f_class_weight: Optional[torch.Tensor] = None,
-    label_smoothing: float = 0.0,
     log_s2f: Optional[torch.Tensor] = None,
     log_p2f: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, dict]:
@@ -161,33 +142,19 @@ def forward_loss_parts(
     p_tgt = batch["anchor_p2f"].to(device)
     s_ok = batch["anchor_has_s2f"].to(device) & (s_tgt >= 0)
     p_ok = batch["anchor_has_p2f"].to(device) & (p_tgt >= 0)
-    loss_s = masked_ce(log_s2f, s_tgt, s_ok, s2f_class_weight, label_smoothing=label_smoothing)
-    loss_p = masked_ce(log_p2f, p_tgt, p_ok, p2f_class_weight, label_smoothing=label_smoothing)
-    loss_s_uw = masked_ce(log_s2f, s_tgt, s_ok, None, label_smoothing=label_smoothing)
-    loss_p_uw = masked_ce(log_p2f, p_tgt, p_ok, None, label_smoothing=label_smoothing)
+    loss_s = masked_ce(log_s2f, s_tgt, s_ok, s2f_class_weight)
+    loss_p = masked_ce(log_p2f, p_tgt, p_ok, p2f_class_weight)
     n_s = int(s_ok.sum())
     n_p = int(p_ok.sum())
     if n_s and n_p:
         total = (loss_s * n_s + loss_p * p2f_loss_weight * n_p) / (n_s + p2f_loss_weight * n_p)
-        total_uw = (loss_s_uw * n_s + loss_p_uw * p2f_loss_weight * n_p) / (n_s + p2f_loss_weight * n_p)
     elif n_s:
         total = loss_s
-        total_uw = loss_s_uw
     elif n_p:
         total = loss_p
-        total_uw = loss_p_uw
     else:
         total = loss_s + loss_p
-        total_uw = loss_s_uw + loss_p_uw
-    return total, {
-        "loss_s2f": loss_s,
-        "loss_p2f": loss_p,
-        "loss_s2f_uw": loss_s_uw,
-        "loss_p2f_uw": loss_p_uw,
-        "loss_uw": total_uw,
-        "log_s2f": log_s2f,
-        "log_p2f": log_p2f,
-    }
+    return total, {"loss_s2f": loss_s, "loss_p2f": loss_p, "log_s2f": log_s2f, "log_p2f": log_p2f}
 
 
 def _count_params(model: EHREncoderTransformer) -> tuple:
@@ -381,7 +348,6 @@ def eval_loader(
     p2f_loss_weight: float = 1.0,
     s2f_class_weight: Optional[torch.Tensor] = None,
     p2f_class_weight: Optional[torch.Tensor] = None,
-    label_smoothing: float = 0.0,
 ) -> dict:
     model.eval()
     tot = 0.0
@@ -400,7 +366,6 @@ def eval_loader(
             p2f_loss_weight=p2f_loss_weight,
             s2f_class_weight=s2f_class_weight,
             p2f_class_weight=p2f_class_weight,
-            label_smoothing=label_smoothing,
             log_s2f=log_s2f,
             log_p2f=log_p2f,
         )
@@ -459,7 +424,7 @@ def main(args):
         print(f"  No enriched join (missing file): {enr!r}")
         enr = None
 
-    full_ds = EHRNextStepDatasetSymile(
+    full_ds = EHRNextStepDataset(
         anchor_source_csv=args.anchor_csv,
         history_csv=args.history_csv,
         schema_csv=args.schema_csv,
@@ -468,21 +433,10 @@ def main(args):
         lookback_max_hours=args.lookback_max_hours,
         include_anchor_row=args.include_anchor_row,
     )
-    cw_mode = "none" if not args.use_class_weights else args.class_weight_mode
     print(
         f"  Loss: p2f_weight={args.p2f_loss_weight}  class_weights={args.use_class_weights}  "
-        f"class_weight_mode={cw_mode}  label_smoothing={args.label_smoothing}  "
-        f"grad_clip={args.grad_clip}  include_anchor_row={args.include_anchor_row}  "
-        f"preprocess=symile_pct+indicator"
+        f"include_anchor_row={args.include_anchor_row}"
     )
-    y = _stratify_labels_from_dataset(full_ds)
-
-    test_split = 1.0 - args.train_split - args.val_split
-    idx_train, idx_val, idx_test = stratified_train_val_test_indices(
-        y, args.train_split, args.val_split, test_split, args.seed
-    )
-    full_ds.fit_preprocess(idx_train)
-
     n_all = len(full_ds)
     if args.max_samples and args.max_samples < n_all:
         rng = np.random.RandomState(args.seed)
@@ -492,11 +446,14 @@ def main(args):
 
     base = full_ds.dataset if isinstance(full_ds, Subset) else full_ds
     input_dim = base.input_dim
+    y = _stratify_labels_from_dataset(base)
     if isinstance(full_ds, Subset):
         y = y[np.array(full_ds.indices, dtype=np.int64)]
-        idx_train, idx_val, idx_test = stratified_train_val_test_indices(
-            y, args.train_split, args.val_split, test_split, args.seed
-        )
+
+    test_split = 1.0 - args.train_split - args.val_split
+    idx_train, idx_val, idx_test = stratified_train_val_test_indices(
+        y, args.train_split, args.val_split, test_split, args.seed
+    )
     train_ds = make_subset(full_ds, idx_train)
     val_ds = make_subset(full_ds, idx_val)
     test_ds = make_subset(full_ds, idx_test)
@@ -548,10 +505,10 @@ def main(args):
     s2f_w = p2f_w = None
     if args.use_class_weights:
         s2f_w = _head_class_weights(
-            base, idx_train, "anchor_has_s2f", "anchor_s2f_cls", args.num_classes, device, mode=cw_mode
+            base, idx_train, "anchor_has_s2f", "anchor_s2f_cls", args.num_classes, device
         )
         p2f_w = _head_class_weights(
-            base, idx_train, "anchor_has_p2f", "anchor_p2f_cls", args.num_classes, device, mode=cw_mode
+            base, idx_train, "anchor_has_p2f", "anchor_p2f_cls", args.num_classes, device
         )
         print(f"  s2f class weights: {s2f_w.detach().cpu().tolist()}")
         print(f"  p2f class weights: {p2f_w.detach().cpu().tolist()}")
@@ -560,15 +517,12 @@ def main(args):
         p2f_loss_weight=args.p2f_loss_weight,
         s2f_class_weight=s2f_w,
         p2f_class_weight=p2f_w,
-        label_smoothing=args.label_smoothing,
     )
 
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     best_val = float("inf")
     best_epoch = -1
-    best_acc_score = -1.0
-    best_acc_epoch = -1
     epochs_no_improve = 0
     stopped_early = False
 
@@ -578,7 +532,7 @@ def main(args):
     for epoch in range(args.epochs):
         model.train()
         tr = 0.0
-        tr_s = tr_p = tr_s_uw = tr_p_uw = 0.0
+        tr_s = tr_p = 0.0
         n_tr_batches = 0
         last_grad_norm = 0.0
         for batch_idx, batch in enumerate(train_loader):
@@ -587,8 +541,6 @@ def main(args):
             opt.zero_grad()
             loss.backward()
             last_grad_norm = _grad_norm(model)
-            if args.grad_clip > 0:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
             if epoch == 0 and batch_idx == 0:
                 w_before_step = _snapshot_trainable(model)
             opt.step()
@@ -617,28 +569,20 @@ def main(args):
             tr += float(loss)
             tr_s += float(parts["loss_s2f"])
             tr_p += float(parts["loss_p2f"])
-            tr_s_uw += float(parts["loss_s2f_uw"])
-            tr_p_uw += float(parts["loss_p2f_uw"])
             n_tr_batches += 1
         tr /= max(n_tr_batches, 1)
         tr_s /= max(n_tr_batches, 1)
         tr_p /= max(n_tr_batches, 1)
-        tr_s_uw /= max(n_tr_batches, 1)
-        tr_p_uw /= max(n_tr_batches, 1)
         epoch_param_delta = _param_delta_l2(model, param_snap_start) if epoch == 0 else None
         st = eval_loader(model, val_loader, device, collect_pred_hist=True, **loss_kw)
-        n_pred_s2f = int(np.count_nonzero(st["pred_hist_s2f"]))
-        n_pred_p2f = int(np.count_nonzero(st["pred_hist_p2f"]))
         print(
             f"Epoch {epoch + 1}/{args.epochs}  train_loss={tr:.4f}  "
-            f"(s2f={tr_s:.4f} p2f={tr_p:.4f})  train_ce_uw_s2f={tr_s_uw:.4f}  "
-            f"train_ce_uw_p2f={tr_p_uw:.4f}  val_loss={st['loss']:.4f}  "
+            f"(s2f={tr_s:.4f} p2f={tr_p:.4f})  val_loss={st['loss']:.4f}  "
             f"val_acc_s2f={st['acc_s2f']:.6f}  val_acc_p2f={st['acc_p2f']:.6f}"
         )
         print(
             f"  val pred_s2f: {_hist_str(st['pred_hist_s2f'])}  "
-            f"val pred_p2f: {_hist_str(st['pred_hist_p2f'])}  "
-            f"pred_diversity_s2f={n_pred_s2f}/3  pred_diversity_p2f={n_pred_p2f}/3"
+            f"val pred_p2f: {_hist_str(st['pred_hist_p2f'])}"
         )
         print(
             f"  train diagnostics: last_batch_grad_norm={last_grad_norm:.6f}  "
@@ -655,34 +599,11 @@ def main(args):
             best_epoch = epoch
             epochs_no_improve = 0
             torch.save(
-                {
-                    "model": model.state_dict(),
-                    "epoch": epoch,
-                    "val_loss": best_val,
-                    "val_acc_s2f": st["acc_s2f"],
-                    "val_acc_p2f": st["acc_p2f"],
-                    "input_dim": input_dim,
-                },
-                out_dir / "best_loss.pt",
+                {"model": model.state_dict(), "epoch": epoch, "val_loss": best_val, "input_dim": input_dim},
+                out_dir / "best.pt",
             )
         else:
             epochs_no_improve += 1
-
-        acc_score = st["acc_s2f"] + st["acc_p2f"]
-        if st["acc_s2f"] >= args.checkpoint_min_acc_s2f and acc_score > best_acc_score:
-            best_acc_score = acc_score
-            best_acc_epoch = epoch
-            torch.save(
-                {
-                    "model": model.state_dict(),
-                    "epoch": epoch,
-                    "val_loss": st["loss"],
-                    "val_acc_s2f": st["acc_s2f"],
-                    "val_acc_p2f": st["acc_p2f"],
-                    "input_dim": input_dim,
-                },
-                out_dir / "best_acc.pt",
-            )
 
         if args.early_stop_patience > 0 and epochs_no_improve >= args.early_stop_patience:
             print(
@@ -693,24 +614,15 @@ def main(args):
             break
 
     torch.save(model.state_dict(), out_dir / "last.pt")
-    ckpt_path = out_dir / "best_acc.pt"
-    if not ckpt_path.is_file():
-        fallback = out_dir / "best_loss.pt"
-        if fallback.is_file():
-            print("  No best_acc.pt found; falling back to best_loss.pt for evaluation")
-            ckpt_path = fallback
-    used_ckpt = "last.pt"
-    if ckpt_path.is_file():
-        ck = torch.load(ckpt_path, map_location=device, weights_only=False)
+    if (out_dir / "best.pt").is_file():
+        ck = torch.load(out_dir / "best.pt", map_location=device, weights_only=False)
         model.load_state_dict(ck["model"])
-        used_ckpt = ckpt_path.name
     test_st = eval_loader(model, test_loader, device, **loss_kw)
-    ckpt_epoch = best_acc_epoch + 1 if best_acc_epoch >= 0 else (best_epoch + 1 if best_epoch >= 0 else None)
     print(
         f"\nTest (summary): loss={test_st['loss']:.4f}  "
         f"acc_s2f={test_st['acc_s2f']:.4f}  acc_p2f={test_st['acc_p2f']:.4f}"
     )
-    print(f"  (checkpoint: {ckpt_path.name}  epoch {ckpt_epoch if ckpt_epoch else 'n/a'})")
+    print(f"  (best checkpoint epoch {best_epoch + 1 if best_epoch >= 0 else 'n/a'})")
 
     val_reports = evaluate_split_both_heads(
         model, val_loader, device, "Val (best checkpoint)", args.num_classes
@@ -725,15 +637,9 @@ def main(args):
         "include_anchor_row": args.include_anchor_row,
         "p2f_loss_weight": args.p2f_loss_weight,
         "use_class_weights": args.use_class_weights,
-        "class_weight_mode": cw_mode,
-        "label_smoothing": args.label_smoothing,
-        "grad_clip": args.grad_clip,
         "anchor_pool": args.anchor_pool,
         "best_val_loss": best_val,
         "best_epoch": best_epoch + 1 if best_epoch >= 0 else None,
-        "best_acc_epoch": best_acc_epoch + 1 if best_acc_epoch >= 0 else None,
-        "best_val_acc_score": best_acc_score if best_acc_epoch >= 0 else None,
-        "checkpoint_used": used_ckpt,
         "stopped_early": stopped_early,
         "test_summary": test_st,
         "val": val_reports,
@@ -780,15 +686,6 @@ if __name__ == "__main__":
     p.add_argument("--include_anchor_row", action=argparse.BooleanOptionalAction, default=INCLUDE_ANCHOR_ROW)
     p.add_argument("--p2f_loss_weight", type=float, default=P2F_LOSS_WEIGHT)
     p.add_argument("--use_class_weights", action=argparse.BooleanOptionalAction, default=USE_CLASS_WEIGHTS)
-    p.add_argument(
-        "--class_weight_mode",
-        type=str,
-        default=CLASS_WEIGHT_MODE,
-        choices=["inverse_freq", "sqrt_inverse", "none"],
-    )
-    p.add_argument("--label_smoothing", type=float, default=LABEL_SMOOTHING)
-    p.add_argument("--grad_clip", type=float, default=GRAD_CLIP)
-    p.add_argument("--checkpoint_min_acc_s2f", type=float, default=CHECKPOINT_MIN_ACC_S2F)
     a = p.parse_args()
     if not a.max_samples:
         a.max_samples = 0

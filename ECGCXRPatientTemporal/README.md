@@ -120,8 +120,36 @@ sbatch ECGCXRPatientTemporal/run_ablation.sh
 
 ## Data extraction
 
-Uses the same modality catalogs as the CXR/ECG encoder experiments
-(`data/p2f_or_s2f_cxr_catalog.csv`, `data/p2f_or_s2f_ecg_catalog.csv`). For each
+By default, the scripts still point at the older p2f/s2f modality catalogs
+(`data/p2f_or_s2f_cxr_catalog.csv`, `data/p2f_or_s2f_ecg_catalog.csv`) for
+backward compatibility with the first runs. For the contrastive-only question,
+build full non-EHR-restricted catalogs first:
+
+```bash
+python ECGCXRPatientTemporal/build_full_catalogs.py
+bash ECGCXRPatientTemporal/run_build_pairs.sh \
+  --cxr_csv data/ecg_cxr_full_cxr_catalog.csv \
+  --ecg_csv data/ecg_cxr_full_ecg_catalog.csv \
+  --target_out ECGCXRPatientTemporal/cache_full/seq_target_pairs.json \
+  --t1_out ECGCXRPatientTemporal/cache_full/patient_temporal_pairs.json \
+  --skip_cxr_path_check
+bash ECGCXRPatientTemporal/run_build_single_pairs.sh \
+  --cxr_csv data/ecg_cxr_full_cxr_catalog.csv \
+  --ecg_csv data/ecg_cxr_full_ecg_catalog.csv \
+  --out ECGCXRPatientTemporal/cache_full/single_ecg_pairs.json \
+  --skip_cxr_path_check
+sbatch ECGCXRPatientTemporal/run_precompute.sh \
+  --pairs ECGCXRPatientTemporal/cache_full/patient_temporal_pairs.json \
+          ECGCXRPatientTemporal/cache_full/seq_target_pairs.json \
+          ECGCXRPatientTemporal/cache_full/single_ecg_pairs.json \
+  --merge
+sbatch ECGCXRPatientTemporal/run_staged.sh \
+  --pairs ECGCXRPatientTemporal/cache_full/patient_temporal_pairs.json \
+  --seq_target_pairs ECGCXRPatientTemporal/cache_full/seq_target_pairs.json \
+  --single_pairs ECGCXRPatientTemporal/cache_full/single_ecg_pairs.json
+```
+
+For each
 patient (`subject_id`), CXRs are sorted by time (one node per distinct
 timestamp) and paired `(t1, t2)` up to `MAX_SKIP` steps apart, within
 `[MIN_INTERVAL_HOURS, MAX_INTERVAL_HOURS]`, keeping all same-patient ECGs whose

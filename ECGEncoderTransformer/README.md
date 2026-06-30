@@ -26,46 +26,41 @@ Pass `--ecg_ckpt` to override.
 ```bash
 # Smoke test (login node, no GPU ok for tiny subset)
 python ECGEncoderTransformer/validate_data.py
-python ECGEncoderTransformer/test_pool_anchor_index.py
 
 # Diagnostics
 python ECGEncoderTransformer/diagnose_masks.py
 python ECGEncoderTransformer/debug_nan_loss.py --max_batches 300
 python ECGEncoderTransformer/diagnose_collapse.py --max_samples 2000 --epochs 5
 python ECGEncoderTransformer/verify_collapse_fix.py --max_samples 2000 --mini_steps 120
-python ECGEncoderTransformer/verify_nan_fix.py
 
-# Slurm GPU (stable defaults from config.py — do NOT copy EHR/CXR p2f_weight=10)
+# Slurm GPU
+sbatch ECGEncoderTransformer/run_train.sh
+
+# Debug subset (recommended stable hyperparams)
 sbatch ECGEncoderTransformer/run_train.sh --max_samples 5000 --epochs 10
-
-# Explicit stable hyperparams (recommended if overriding CLI)
-sbatch ECGEncoderTransformer/run_train.sh --max_samples 5000 --epochs 10 \
-  --lr 1e-4 --p2f_loss_weight 1.0 --max_grad_norm 1.0 --anchor_pool mean
 ```
-
-**Do not** pass `--p2f_loss_weight 10` or `--lr 5e-4` (EHR/CXR defaults); on sparse p2f mini-batches this often yields mid-epoch NaN and collapsed predictions.
 
 ## Collapse / NaN (Slurm job failure mode)
 
-If training logs show `non-finite loss` mid-epoch, then `param_l2=nan` and val predictions collapse to one class, weights were corrupted — not a benign majority-class optimum.
+If training logs show `non-finite loss` mid-epoch, then `param_l2=nan` and val predictions are **100% class 0**, the model weights were corrupted (not a benign majority-class optimum). Typical trigger: `p2f_loss_weight=10` + inverse-frequency class weights + `lr=5e-4` on sparse p2f mini-batches.
 
-**Fixes in this repo (causal encoder unchanged):**
+**Fixes in this repo (encoder stays frozen; architecture unchanged):**
 
-- Causal attention uses **split** `key_padding_mask` + bool causal mask (same as CXREncoderTransformer), not float `-inf` combined mask
-- Default **`anchor_pool=mean`**: classify from **mean-pooled ECG token** states; learnable anchor slot still attends causally but is not the sole pooled vector
-- Symile encoder `target_time` matches `ecg_target_len` (no 5000↔1000 upsample)
-- Train loop rollback on non-finite loss/grad; `best.pt` only when val loss is finite **and** ≥2 unique s2f preds
-- Safer defaults: `LR=1e-4`, `P2F_LOSS_WEIGHT=1.0`, `MAX_GRAD_NORM=1.0`, `LABEL_SMOOTHING=0.05`, class weights clipped to `[0.25, 4.0]`
+- Combined causal+padding attention mask (`build_combined_attn_mask`) and logits clamp in `model.py`
+- Train loop weight rollback on non-finite loss/grad; only save `best.pt` when val loss is finite
+- Safer defaults in `config.py`: `LR=1e-4`, `P2F_LOSS_WEIGHT=1.0`, `MAX_GRAD_NORM=1.0`, class weights clipped to `[0.25, 4.0]`
 - `collate_ecg_window_batch` sanitizes non-finite waveforms
 
 Reproduce vs verify:
 
 ```bash
+# Legacy unstable settings (expect collapse / NaN on 2k subset)
 python ECGEncoderTransformer/diagnose_collapse.py --max_samples 2000 --epochs 5
-# Expect experiment F_causal_mean_pool in diagnose_collapse.json to pass
+# Check output/diagnose_collapse/diagnose_collapse.json — experiment A_legacy_defaults
 
+# Full train with new defaults
 sbatch ECGEncoderTransformer/run_train.sh --max_samples 5000 --epochs 10
-# Expect: train skipped non-finite loss=0, val pred_s2f unique_classes=3, finite param_l2
+# Expect: val pred_s2f unique_classes=3, train skipped non-finite loss=0
 ```
 
 ## Architecture
@@ -74,9 +69,8 @@ sbatch ECGEncoderTransformer/run_train.sh --max_samples 5000 --epochs 10
 ecg_seq [B,T,12,L]
   → frozen ECG encoder (only valid timesteps) → [B,T,D]
   → Linear → d_model + sinusoidal pos
-  → causal EncoderBlocks (key_padding_mask + bool causal mask)
-  → optional learnable anchor slot at end (context only when anchor_pool=mean)
-  → mean-pool valid ECG tokens (default) or last-pool (anchor slot if enabled)
+  → causal TransformerEncoderBlocks (key_padding_mask + bool causal mask)
+  → optional learnable anchor slot at end; pool last valid (= anchor)
   → head_s2f / head_p2f (MLP → 3 logits each)
 ```
 
@@ -85,4 +79,4 @@ Frozen by default: full `ecg_enc`.
 
 ## Config
 
-See `config.py` — `ECG_TARGET_LEN=1000`, `ANCHOR_POOL=mean`, `INCLUDE_ANCHOR_SLOT=True`, `USE_CLASS_WEIGHTS=True`.
+See `config.py` — `ECG_TARGET_LEN=1000`, `INCLUDE_ANCHOR_SLOT=True`, `USE_CLASS_WEIGHTS=True`.

@@ -16,14 +16,9 @@ if _CXR_EXP.is_dir() and str(_CXR_EXP) not in sys.path:
     sys.path.insert(0, str(_CXR_EXP))
 
 from models.encoders.ecg import build_ecg_encoder_from_ckpt  # noqa: E402
-from blocks_cxrgen import EncoderBlock, PositionalEmbedding  # noqa: E402
+from blocks_cxrgen import EncoderBlock, PositionalEmbedding, build_combined_attn_mask  # noqa: E402
 
 _LOGIT_CLAMP = 30.0
-
-
-def _build_causal_mask(t: int, device: torch.device) -> torch.Tensor:
-    """Bool mask for nn.MultiheadAttention (True = disallow attention)."""
-    return torch.triu(torch.ones(t, t, device=device, dtype=torch.bool), diagonal=1)
 
 
 def _change_cls_head(d_model: int, num_classes: int, dropout: float) -> nn.Sequential:
@@ -33,13 +28,6 @@ def _change_cls_head(d_model: int, num_classes: int, dropout: float) -> nn.Seque
         nn.Dropout(dropout),
         nn.Linear(d_model, num_classes),
     )
-
-
-def _init_cls_head(head: nn.Sequential) -> None:
-    last = head[-1]
-    if isinstance(last, nn.Linear):
-        nn.init.xavier_uniform_(last.weight, gain=0.5)
-        nn.init.zeros_(last.bias)
 
 
 class ECGEncoderTransformer(nn.Module):
@@ -59,7 +47,7 @@ class ECGEncoderTransformer(nn.Module):
         head_dropout: float = 0.2,
         num_classes: int = 3,
         max_seq_length: int = 512,
-        anchor_pool: str = "mean",
+        anchor_pool: str = "last",
         ecg_ckpt_path: Optional[str] = None,
         input_channels: int = 12,
         sig_len: int = 1000,
@@ -103,14 +91,6 @@ class ECGEncoderTransformer(nn.Module):
         self.enc_norm = nn.LayerNorm(d_model)
         self.head_s2f = _change_cls_head(d_model, num_classes, head_dropout)
         self.head_p2f = _change_cls_head(d_model, num_classes, head_dropout)
-        self._init_learnable_params()
-
-    def _init_learnable_params(self) -> None:
-        nn.init.normal_(self.miss_ecg, mean=0.0, std=0.02)
-        if self.anchor_slot is not None:
-            nn.init.normal_(self.anchor_slot, mean=0.0, std=0.02)
-        _init_cls_head(self.head_s2f)
-        _init_cls_head(self.head_p2f)
 
     def _encode_flat(self, flat: torch.Tensor) -> torch.Tensor:
         if self.freeze_ecg:
@@ -118,27 +98,21 @@ class ECGEncoderTransformer(nn.Module):
                 return self.ecg_enc(flat)
         return self.ecg_enc(flat)
 
-    def _h_and_mask_for_pool(self, h: torch.Tensor, mask: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        """ECG timesteps only (exclude learnable anchor slot from classification pool)."""
-        if self.include_anchor_slot and h.size(1) > 1:
-            return h[:, :-1, :], mask[:, :-1]
-        return h, mask
-
     def _pool_anchor(self, h: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         """Pool anchor representation from transformer output h (B, T, D)."""
         if self.anchor_pool == "last":
             if self.include_anchor_slot:
+                # Anchor slot is always appended as the last timestep.
                 return h[:, -1, :]
+            # Last True index (handles trailing pad without assuming mask.sum()-1).
             rev = mask.long().fliplr()
             has_any = rev.any(dim=1)
             last_idx = mask.size(1) - 1 - rev.argmax(dim=1)
             last_idx = torch.where(has_any, last_idx, torch.zeros_like(last_idx))
             batch_idx = torch.arange(h.size(0), device=h.device, dtype=torch.long)
             return h[batch_idx, last_idx]
-
-        h_ecg, m_ecg = self._h_and_mask_for_pool(h, mask)
-        denom = m_ecg.float().sum(dim=1, keepdim=True).clamp(min=1.0)
-        return (h_ecg * m_ecg.unsqueeze(-1).float()).sum(dim=1) / denom
+        denom = mask.float().sum(dim=1, keepdim=True).clamp(min=1.0)
+        return (h * mask.unsqueeze(-1).float()).sum(dim=1) / denom
 
     def forward(
         self,
@@ -168,20 +142,20 @@ class ECGEncoderTransformer(nn.Module):
                 [ecg_mask, torch.ones(bsz, 1, dtype=ecg_mask.dtype, device=device)],
                 dim=1,
             )
-            t = z.size(1)
 
         h = self.proj(z)
         h = self.pos(h)
         h = self.pos_drop(h)
 
+        # PyTorch MHA yields NaN when every token is key-padded for a row (all ECG loads failed).
         safe_mask = ecg_mask.clone()
         all_invalid = ~safe_mask.any(dim=1)
         if all_invalid.any():
             safe_mask[all_invalid, 0] = True
         pad = ~safe_mask.bool()
-        caus = _build_causal_mask(t, device)
+        attn_mask = build_combined_attn_mask(pad, causal=True)
         for layer in self.layers:
-            h = layer(h, key_padding_mask=pad, attn_mask=caus)
+            h = layer(h, attn_mask=attn_mask)
         h = self.enc_norm(h)
         h = torch.nan_to_num(h, nan=0.0, posinf=0.0, neginf=0.0)
 

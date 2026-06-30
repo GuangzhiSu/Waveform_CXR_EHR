@@ -35,9 +35,8 @@ class EHREncoderTransformer(nn.Module):
     """
     Per-row ``EHRMLPEncoder`` -> causal transformer -> anchor pooling -> s2f/p2f MLP heads.
 
-    Input sequence = EHR rows in [anchor_t - 24h, anchor_t - 12h]
-    (Symile-style: percentile features concatenated with presence indicators, dim 2F).
-    Targets = anchor ``*_severity_change_12to24h`` (3-class) at time t.
+    Input sequence = EHR rows in [anchor_t - 24h, anchor_t - 12h] plus anchor row at t
+    (percentile features). Targets = anchor ``*_severity_change_12to24h`` (3-class).
     """
 
     def __init__(
@@ -92,13 +91,7 @@ class EHREncoderTransformer(nn.Module):
         denom = mask.float().sum(dim=1, keepdim=True).clamp(min=1.0)
         return (h * mask.unsqueeze(-1).float()).sum(dim=1) / denom
 
-    def encode_rows(self, ehr_rows: torch.Tensor) -> torch.Tensor:
-        """Encode single-row or batched EHR features -> row embeddings."""
-        return self.row_encoder(ehr_rows)
-
-    def forward_transformer(
-        self, ehr_seq: torch.Tensor, ehr_mask: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, ehr_seq: torch.Tensor, ehr_mask: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         device = ehr_seq.device
         z0 = self.row_encoder(ehr_seq)
         z0 = z0 * ehr_mask.unsqueeze(-1).to(dtype=z0.dtype)
@@ -112,9 +105,6 @@ class EHREncoderTransformer(nn.Module):
         for layer in self.layers:
             h = layer(h, key_padding_mask=pad, attn_mask=caus)
         h = self.enc_norm(h)
-        anchor_vec = self._pool_anchor(h, ehr_mask)
-        return anchor_vec, z0
 
-    def forward(self, ehr_seq: torch.Tensor, ehr_mask: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        anchor_vec, _ = self.forward_transformer(ehr_seq, ehr_mask)
+        anchor_vec = self._pool_anchor(h, ehr_mask)
         return self.head_s2f(anchor_vec), self.head_p2f(anchor_vec)

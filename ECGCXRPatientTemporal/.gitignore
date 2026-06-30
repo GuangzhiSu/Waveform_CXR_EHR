@@ -1,8 +1,8 @@
 # Large/derived artifacts — regenerate via the pipeline scripts.
 pylibs/
 checkpoints/
-cache/
-output/
+cache*/
+output*/
 external/ECG-R1/
 __pycache__/
 *.pyc

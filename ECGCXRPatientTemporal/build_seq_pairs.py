@@ -3,8 +3,9 @@
 Reuses the slow catalog loaders from ``build_pairs.py`` once, then emits:
 
   * Exp 3  (seq_target_pairs.json) -- maximal, NO CXR_t1:
-      every CXR with >=1 same-patient ECG in [t2 - lookback, t2) becomes a
-      target. Sample: {patient_id, t2_h, cxr_t2, ecg_ids, ecg_times_h, delta_h}
+      every CXR with >=1 same-patient ECG in [t2 - lookback, t2 - min_horizon]
+      becomes a target. Sample:
+      {patient_id, t2_h, cxr_t2, ecg_ids, ecg_times_h, delta_h}
       where delta_h = t2 - (most recent ECG time).
 
   * Exp 4  (patient_temporal_pairs.json) -- with CXR_t1:
@@ -56,11 +57,11 @@ def build(cxr_nodes: dict, ecg_nodes: dict, args):
             continue
         e_times = np.array([e["t_h"] for e in eseq], dtype=np.float64)
 
-        # ---- Exp 3: each CXR as a target, ECGs in [t2 - lookback, t2) ----
+        # ---- Exp 3: each CXR as a target, ECGs 12-24h before t2 by default ----
         for j in range(len(cseq)):
             t2 = cseq[j]["t_h"]
             lo = int(np.searchsorted(e_times, t2 - args.lookback_hours, side="left"))
-            hi = int(np.searchsorted(e_times, t2, side="left"))  # strictly before t2
+            hi = int(np.searchsorted(e_times, t2 - args.min_horizon_hours, side="right"))
             idxs = _cap_recent(list(range(lo, hi)), args.max_ecgs)
             if len(idxs) < args.min_ecgs:
                 continue
@@ -120,6 +121,7 @@ def main() -> int:
     ap.add_argument("--cxr_root", default=C.CXR_ROOT)
     ap.add_argument("--target_out", default=C.SEQ_TARGET_PAIRS_JSON)
     ap.add_argument("--t1_out", default=C.PAIRS_JSON)
+    ap.add_argument("--min_horizon_hours", type=float, default=C.SEQ_MIN_HORIZON_HOURS)
     ap.add_argument("--lookback_hours", type=float, default=C.SEQ_LOOKBACK_HOURS)
     ap.add_argument("--min_interval_hours", type=float, default=C.MIN_INTERVAL_HOURS)
     ap.add_argument("--max_interval_hours", type=float, default=C.MAX_INTERVAL_HOURS)
@@ -127,10 +129,14 @@ def main() -> int:
     ap.add_argument("--min_ecgs", type=int, default=C.MIN_ECGS_PER_INTERVAL)
     ap.add_argument("--max_ecgs", type=int, default=C.MAX_ECGS_PER_INTERVAL)
     ap.add_argument("--require_cxr_on_disk", action="store_true")
+    ap.add_argument("--skip_cxr_path_check", action="store_true",
+                    help="Do not os.stat every CXR during pair building; assume constructed paths exist.")
     args = ap.parse_args()
 
     print("=== build_seq_pairs: Exp3 (no t1) + Exp4 (with t1) ===")
-    cxr_nodes = load_cxr_nodes(args.cxr_csv, args.metadata_path, args.cxr_root)
+    cxr_nodes = load_cxr_nodes(args.cxr_csv, args.metadata_path, args.cxr_root,
+                               min_cxrs=1,
+                               check_paths=not args.skip_cxr_path_check)
     ecg_nodes = load_ecg_nodes(args.ecg_csv)
     target_pairs, t1_pairs, cxr_meta, ecg_meta = build(cxr_nodes, ecg_nodes, args)
 

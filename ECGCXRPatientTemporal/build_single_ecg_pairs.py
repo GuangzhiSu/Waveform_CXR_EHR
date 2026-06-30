@@ -117,11 +117,15 @@ def main() -> int:
     ap.add_argument("--restrict_to_cache", action="store_true",
                     help="Keep only ECG/CXR already in the existing embedding cache (no GPU recompute).")
     ap.add_argument("--require_cxr_on_disk", action="store_true")
+    ap.add_argument("--skip_cxr_path_check", action="store_true",
+                    help="Do not os.stat every CXR during pair building; assume constructed paths exist.")
     args = ap.parse_args()
 
     print("=== build_single_ecg_pairs: single ECG -> future CXR "
           f"({args.min_horizon_hours:.0f}-{args.max_horizon_hours:.0f}h) ===")
-    cxr_nodes = load_cxr_nodes(args.cxr_csv, args.metadata_path, args.cxr_root)
+    cxr_nodes = load_cxr_nodes(args.cxr_csv, args.metadata_path, args.cxr_root,
+                               min_cxrs=1,
+                               check_paths=not args.skip_cxr_path_check)
     ecg_nodes = load_ecg_nodes(args.ecg_csv)
     pairs, cxr_meta, ecg_meta = build_single_pairs(cxr_nodes, ecg_nodes, args)
 
