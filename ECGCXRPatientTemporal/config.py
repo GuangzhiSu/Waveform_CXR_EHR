@@ -25,9 +25,21 @@ CXR_METADATA_PATH = (
 )
 
 # ---------------------------------------------------------------------------
+# Runtime artifacts.
+# ---------------------------------------------------------------------------
+ARTIFACTS_DIR = EXP_DIR / "artifacts"
+CACHE_ROOT = ARTIFACTS_DIR / "cache"
+CACHE_DIR = CACHE_ROOT / "default"
+OUTPUTS_DIR = ARTIFACTS_DIR / "outputs"
+OUTPUT_DIR = str(OUTPUTS_DIR / "default")
+STAGED_OUTPUT_DIR = str(OUTPUTS_DIR / "staged")
+LOG_DIR = ARTIFACTS_DIR / "logs"
+PYLIBS_DIR = ARTIFACTS_DIR / "pylibs"
+
+# ---------------------------------------------------------------------------
 # Frozen encoder checkpoints.
 # ---------------------------------------------------------------------------
-CKPT_DIR = EXP_DIR / "checkpoints"
+CKPT_DIR = ARTIFACTS_DIR / "checkpoints"
 # Bio-ViL-T image encoder (downloaded from HuggingFace microsoft/BiomedVLP-BioViL-T)
 BIOVIL_T_CKPT = str(CKPT_DIR / "biovil_t_image_model_proj_size_128.pt")
 # ECG-CoCa encoder (from PKUDigitalHealth/ECG-R1 -> ECG-Chat Google Drive)
@@ -42,9 +54,8 @@ ECG_FEAT_DIM = 512   # ECG-CoCa pooled latent
 ECG_SIG_LEN = 5000   # ECG-CoCa expects 12 x 5000 (500 Hz x 10 s)
 
 # ---------------------------------------------------------------------------
-# Cache / artifact paths.
+# Embedding cache paths.
 # ---------------------------------------------------------------------------
-CACHE_DIR = EXP_DIR / "cache"
 # Exp 4 (+ controls): CXR_t1 + ECG sequence -> CXR_t2 (has cxr_t1).
 PAIRS_JSON = str(CACHE_DIR / "patient_temporal_pairs.json")
 # Exp 3: ECG sequence -> CXR_t2 (no cxr_t1; larger, less constrained set).
@@ -55,23 +66,23 @@ CXR_EMB_NPY = str(CACHE_DIR / "cxr_emb.npy")
 CXR_IDS_JSON = str(CACHE_DIR / "cxr_ids.json")
 ECG_EMB_NPY = str(CACHE_DIR / "ecg_emb.npy")
 ECG_IDS_JSON = str(CACHE_DIR / "ecg_ids.json")
-OUTPUT_DIR = str(EXP_DIR / "output")
 
 # ---------------------------------------------------------------------------
-# Sequence pair-building parameters (Experiments 3 & 4), maximal-coverage.
+# Sequence pair-building parameters (Experiments 3 & 4).
 # ---------------------------------------------------------------------------
 # Exp 3 (no CXR_t1): ECGs in [t2 - SEQ_LOOKBACK_HOURS, t2 - SEQ_MIN_HORIZON_HOURS]
 # -> CXR_t2.
 SEQ_MIN_HORIZON_HOURS = 12.0
 SEQ_LOOKBACK_HOURS = 24.0
-# Exp 4 (with CXR_t1): pick prior CXR_t1 with t2 - t1 in [MIN, MAX], ECGs in (t1, t2].
-MIN_INTERVAL_HOURS = 3.0          # t2 - t1 lower bound (relaxed from 12 for max coverage)
-MAX_INTERVAL_HOURS = 48.0         # t2 - t1 upper bound (relaxed from 20 for max coverage)
+# Exp 4 (with CXR_t1): CXR_t1 in [t2 - 24h, t2], ECGs in [max(t2 - 12h, t1), t2].
+MIN_INTERVAL_HOURS = 0.0
+MAX_INTERVAL_HOURS = 24.0
 MAX_SKIP = 60                     # pair a target t2 with up to this many earlier CXRs as t1
 MIN_ECGS_PER_INTERVAL = 1         # require >= this many ECGs in the window
 MAX_ECGS_PER_INTERVAL = 32        # cap ECGs per sample (keep most recent before t2)
-# Legacy t1-anchored ECG window (kept for backward-compat with the original
-# build_pairs.py / dataset.py path; the staged builder uses (t1, t2] instead).
+ECG_LOOKBACK_HOURS = 12.0
+# Legacy t1-anchored ECG window kept only for older callers that still pass
+# explicit --ecg_before_hours / --ecg_after_hours.
 ECG_WINDOW_BEFORE_HOURS = 12.0
 ECG_WINDOW_AFTER_HOURS = 3.0
 

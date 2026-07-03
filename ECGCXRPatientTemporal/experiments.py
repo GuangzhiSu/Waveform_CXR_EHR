@@ -156,7 +156,7 @@ def default_registry() -> "list[ExperimentSpec]":
     specs.append(ExperimentSpec(
         name="exp4c_fusion_cxr1_ecgseq",
         description="Fusion: CXR_t1 + ECG sequence -> CXR_t2 (the target model).",
-        pairs_kind="seq_t1", target_window="3-48h",
+        pairs_kind="seq_t1", target_window="0-24h",
         use_cxr_t1=True, use_ecg=True, ecg_mode="sequence",
         use_predictor_g=True, use_time_embedding=True,
         use_transformer=True, use_future_query=False, ecg_pool="mean",
@@ -166,7 +166,7 @@ def default_registry() -> "list[ExperimentSpec]":
     specs.append(ExperimentSpec(
         name="exp4a_ecg_only",
         description="Shortcut control A: ECG sequence only -> CXR_t2 (no CXR_t1), Exp4 sample set.",
-        pairs_kind="seq_t1", target_window="3-48h",
+        pairs_kind="seq_t1", target_window="0-24h",
         use_cxr_t1=False, use_ecg=True, ecg_mode="sequence",
         use_predictor_g=True, use_time_embedding=True,
         use_transformer=True, use_future_query=False, ecg_pool="mean",
@@ -176,7 +176,7 @@ def default_registry() -> "list[ExperimentSpec]":
     specs.append(ExperimentSpec(
         name="exp4b_cxr_only",
         description="Shortcut control B: CXR_t1 only -> CXR_t2 (no ECG).",
-        pairs_kind="seq_t1", target_window="3-48h",
+        pairs_kind="seq_t1", target_window="0-24h",
         use_cxr_t1=True, use_ecg=False, ecg_mode="sequence",
         use_predictor_g=True, use_time_embedding=False,
         use_transformer=False, use_future_query=False,
@@ -186,7 +186,7 @@ def default_registry() -> "list[ExperimentSpec]":
     specs.append(ExperimentSpec(
         name="exp4d_fusion_shuffled_ecg",
         description="Shortcut control D: CXR_t1 + shuffled (other-patient) ECG sequence -> CXR_t2.",
-        pairs_kind="seq_t1", target_window="3-48h",
+        pairs_kind="seq_t1", target_window="0-24h",
         use_cxr_t1=True, use_ecg=True, ecg_mode="sequence",
         use_predictor_g=True, use_time_embedding=True,
         use_transformer=True, use_future_query=False, ecg_pool="mean",
@@ -197,7 +197,7 @@ def default_registry() -> "list[ExperimentSpec]":
     specs.append(ExperimentSpec(
         name="exp4e_fusion_zeroed_ecg",
         description="Shortcut control E: CXR_t1 + zeroed ECG sequence -> CXR_t2.",
-        pairs_kind="seq_t1", target_window="3-48h",
+        pairs_kind="seq_t1", target_window="0-24h",
         use_cxr_t1=True, use_ecg=True, ecg_mode="sequence",
         use_predictor_g=True, use_time_embedding=True,
         use_transformer=True, use_future_query=False, ecg_pool="mean",
@@ -211,7 +211,7 @@ def default_registry() -> "list[ExperimentSpec]":
         name="exp5a_proj_tx_crossattn_norm",
         description=("Scheme 1: project CXR_t1 and ECG tokens to one dimension, "
                      "ECG Transformer, CXR query cross-attends to ECG, normalized projection."),
-        pairs_kind="seq_t1", target_window="3-48h",
+        pairs_kind="seq_t1", target_window="0-24h",
         use_cxr_t1=True, use_ecg=True, ecg_mode="sequence",
         use_predictor_g=True, use_time_embedding=True,
         use_transformer=True, use_future_query=False, ecg_pool="mean",
@@ -222,7 +222,7 @@ def default_registry() -> "list[ExperimentSpec]":
         name="exp5b_proj_add_norm",
         description=("Scheme 2: project CXR_t1 and pooled ECG sequence to one dimension, "
                      "add them, then normalize projection."),
-        pairs_kind="seq_t1", target_window="3-48h",
+        pairs_kind="seq_t1", target_window="0-24h",
         use_cxr_t1=True, use_ecg=True, ecg_mode="sequence",
         use_predictor_g=True, use_time_embedding=True,
         use_transformer=True, use_future_query=False, ecg_pool="mean",
@@ -233,7 +233,7 @@ def default_registry() -> "list[ExperimentSpec]":
         name="exp5c_weighted_attn_pool",
         description=("Scheme 3: single-linear weighted attentive pooling over CXR_t1 "
                      "and ECG Transformer tokens, then normalized projection."),
-        pairs_kind="seq_t1", target_window="3-48h",
+        pairs_kind="seq_t1", target_window="0-24h",
         use_cxr_t1=True, use_ecg=True, ecg_mode="sequence",
         use_predictor_g=True, use_time_embedding=True,
         use_transformer=True, use_future_query=False, ecg_pool="mean",
@@ -244,7 +244,7 @@ def default_registry() -> "list[ExperimentSpec]":
         name="exp6a_cxr_residual_ecg",
         description=("CXR_t1 base predictor plus a gated ECG residual. Intended to "
                      "warm-start from CXR-only and test whether ECG improves the CXR_t1 shortcut."),
-        pairs_kind="seq_t1", target_window="3-48h",
+        pairs_kind="seq_t1", target_window="0-24h",
         use_cxr_t1=True, use_ecg=True, ecg_mode="sequence",
         use_predictor_g=True, use_time_embedding=True,
         use_transformer=True, use_future_query=False, ecg_pool="mean",

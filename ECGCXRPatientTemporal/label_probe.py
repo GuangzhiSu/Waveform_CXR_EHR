@@ -326,17 +326,20 @@ def build_args():
     ap.add_argument("--experiment", default="exp5a_proj_tx_crossattn_norm",
                     choices=sorted(REGISTRY.keys()))
     ap.add_argument("--checkpoint", default=None)
-    ap.add_argument("--contrastive_output_dir", default=str(EXP_DIR / "output_fusion_schemes_full"))
+    ap.add_argument(
+        "--contrastive_output_dir",
+        default=str(C.OUTPUTS_DIR / "fusion_schemes_full"),
+    )
     ap.add_argument("--label_csv", default=DEFAULT_LABEL_CSV)
-    ap.add_argument("--output_dir", default=str(EXP_DIR / "output_label_probe"))
+    ap.add_argument("--output_dir", default=str(C.OUTPUTS_DIR / "label_probe"))
     ap.add_argument("--embedding", default="q", choices=["q", "c1", "c2"])
     ap.add_argument("--uncertain_positive", action="store_true")
     ap.add_argument("--min_train_positives", type=int, default=10)
     ap.add_argument("--probe", default="both", choices=["linear", "mlp", "both"])
 
-    ap.add_argument("--pairs", default=str(EXP_DIR / "cache_full" / "patient_temporal_pairs.json"))
-    ap.add_argument("--seq_target_pairs", default=str(EXP_DIR / "cache_full" / "seq_target_pairs.json"))
-    ap.add_argument("--single_pairs", default=str(EXP_DIR / "cache_full" / "single_ecg_pairs.json"))
+    ap.add_argument("--pairs", default=str(C.CACHE_ROOT / "full" / "patient_temporal_pairs.json"))
+    ap.add_argument("--seq_target_pairs", default=str(C.CACHE_ROOT / "full" / "seq_target_pairs.json"))
+    ap.add_argument("--single_pairs", default=str(C.CACHE_ROOT / "full" / "single_ecg_pairs.json"))
     ap.add_argument("--cxr_emb", default=C.CXR_EMB_NPY)
     ap.add_argument("--cxr_ids", default=C.CXR_IDS_JSON)
     ap.add_argument("--ecg_emb", default=C.ECG_EMB_NPY)

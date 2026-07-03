@@ -6,11 +6,9 @@ Reuses the same modality catalogs as the CXR/ECG encoder experiments:
   * ECG: data/p2f_or_s2f_ecg_catalog.csv  (subject_id, wf_Base_Time, wf_File_Path, wf_File_Name)
 
 For each patient we sort their CXRs by acquisition time (one node per distinct
-timestamp) and form interval samples by pairing a CXR at t1 with a later CXR at
-t2 (up to ``MAX_SKIP`` steps ahead, within [MIN, MAX] interval hours, e.g.
-t2 in [t1+12, t1+20]), keeping all ECGs from the same patient whose base time
-falls in the t1-anchored context window [t1 - BEFORE, t1 + AFTER] (e.g.
-[t1-12, t1+3]), decoupled from t2.
+timestamp).  A target CXR at t2 is paired with each prior CXR_t1 in
+[t2 - MAX_INTERVAL_HOURS, t2].  The ECG context is the adjacent same-patient window
+[max(t2 - ECG_LOOKBACK_HOURS, t1), t2].
 
 Outputs (under cache/):
   * patient_temporal_pairs.json  : {"pairs": [...], "cxr_meta": {...}, "ecg_meta": {...}}
@@ -28,14 +26,10 @@ import numpy as np
 import pandas as pd
 
 EXP_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = EXP_DIR.parent
 sys.path.insert(0, str(EXP_DIR))
-for _p in (PROJECT_ROOT / "BaselineExperiment", PROJECT_ROOT / "BaselineExperiment" / "CXRUni"):
-    if _p.is_dir() and str(_p) not in sys.path:
-        sys.path.insert(0, str(_p))
 
 import config as C  # noqa: E402
-from cxr_classification.dataset import _norm_dicom_id, get_cxr_path  # noqa: E402
+from io_utils import get_cxr_path, norm_dicom_id  # noqa: E402
 
 _HOUR_NS = 3600 * 1e9
 
@@ -50,14 +44,14 @@ def load_cxr_nodes(cxr_csv: str, metadata_path: str, cxr_root: str,
     df = pd.read_csv(cxr_csv, low_memory=False)
     df["subject_id"] = pd.to_numeric(df["subject_id"], errors="coerce")
     df["supertable_datetime"] = pd.to_datetime(df["supertable_datetime"], errors="coerce")
-    df["dicom_id"] = df["dicom_id"].map(_norm_dicom_id)
+    df["dicom_id"] = df["dicom_id"].map(norm_dicom_id)
     df = df[df["subject_id"].notna() & df["supertable_datetime"].notna()
             & df["dicom_id"].astype(str).str.len().gt(0)].copy()
     df["subject_id"] = df["subject_id"].astype(np.int64)
 
     if metadata_path and os.path.isfile(metadata_path):
         meta = pd.read_csv(metadata_path, usecols=["dicom_id", "study_id"])
-        meta["dicom_id"] = meta["dicom_id"].map(_norm_dicom_id)
+        meta["dicom_id"] = meta["dicom_id"].map(norm_dicom_id)
         meta = meta.drop_duplicates(subset=["dicom_id"], keep="first")
         df = df.merge(meta, on="dicom_id", how="left")
     else:
@@ -138,9 +132,9 @@ def build_pairs(cxr_nodes: dict, ecg_nodes: dict, args) -> tuple[list, dict, dic
                 dt = t2 - t1
                 if dt < args.min_interval_hours or dt > args.max_interval_hours:
                     continue
-                # ECG context window anchored at t1: [t1 - before, t1 + after], decoupled from t2.
-                lo = np.searchsorted(e_times, t1 - args.ecg_before_hours, side="left")
-                hi = np.searchsorted(e_times, t1 + args.ecg_after_hours, side="right")
+                ecg_start = max(t2 - args.ecg_lookback_hours, t1)
+                lo = np.searchsorted(e_times, ecg_start, side="left")
+                hi = np.searchsorted(e_times, t2, side="right")
                 idxs = list(range(lo, hi))
                 if len(idxs) < args.min_ecgs_per_interval:
                     n_no_ecg += 1
@@ -163,6 +157,7 @@ def build_pairs(cxr_nodes: dict, ecg_nodes: dict, args) -> tuple[list, dict, dic
                     "cxr_t2": cseq[j]["dicom_id"],
                     "ecg_ids": ecg_ids,
                     "ecg_times_h": ecg_times,
+                    "delta_h": float(dt),
                 })
     print(f"  Built pairs: {len(pairs):,}  (skipped no-ecg intervals={n_no_ecg:,})")
     print(f"  Unique CXR={len(cxr_meta):,}  Unique ECG={len(ecg_meta):,}")
@@ -185,8 +180,8 @@ def main() -> int:
     ap.add_argument("--max_skip", type=int, default=C.MAX_SKIP)
     ap.add_argument("--min_ecgs_per_interval", type=int, default=C.MIN_ECGS_PER_INTERVAL)
     ap.add_argument("--max_ecgs_per_interval", type=int, default=C.MAX_ECGS_PER_INTERVAL)
-    ap.add_argument("--ecg_before_hours", type=float, default=C.ECG_WINDOW_BEFORE_HOURS)
-    ap.add_argument("--ecg_after_hours", type=float, default=C.ECG_WINDOW_AFTER_HOURS)
+    ap.add_argument("--ecg_lookback_hours", type=float, default=C.ECG_LOOKBACK_HOURS,
+                    help="Use ECGs in [max(t2 - this many hours, t1), t2].")
     ap.add_argument("--require_cxr_on_disk", action="store_true",
                     help="Drop pairs whose CXR jpg is not present on disk.")
     ap.add_argument("--skip_cxr_path_check", action="store_true",

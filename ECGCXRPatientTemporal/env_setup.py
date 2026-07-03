@@ -3,7 +3,7 @@
 This module must be imported *before* any ``health_multimodal`` or ``ecg_coca``
 import. It:
 
-1. Puts the workspace-local pip prefix (``pylibs/``) on ``sys.path`` so the
+1. Puts the workspace-local pip prefix (``artifacts/pylibs/``) on ``sys.path`` so the
    ``health_multimodal`` (Bio-ViL-T) and ``gdown`` packages installed there are
    importable inside the ``MedTVT-R1`` conda env (whose site-packages is
    read-only on this cluster).
@@ -21,7 +21,7 @@ from pathlib import Path
 
 EXP_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = EXP_DIR.parent
-PYLIBS = EXP_DIR / "pylibs"
+PYLIBS = EXP_DIR / "artifacts" / "pylibs"
 ECG_R1_DIR = EXP_DIR / "external" / "ECG-R1"
 
 

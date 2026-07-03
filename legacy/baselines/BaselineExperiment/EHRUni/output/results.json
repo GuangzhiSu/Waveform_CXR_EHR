@@ -1,0 +1,35 @@
+{
+  "best_val_acc": 0.8372829023543034,
+  "test_acc": 0.834748379129361,
+  "confusion_matrix": [
+    [
+      1861,
+      423,
+      116
+    ],
+    [
+      223,
+      5214,
+      473
+    ],
+    [
+      78,
+      828,
+      3740
+    ]
+  ],
+  "modality": "EHR-only temporal",
+  "task": "ARDS_severity_classification",
+  "history_csv": "/work/gs285/Waveform_CXR_EHR/data/p2f_vent_fio2_enriched.csv",
+  "schema_csv": "/work/gs285/Waveform_CXR_EHR/data/supertable_columns_completed.csv",
+  "lookback_min_hours": 12,
+  "lookback_max_hours": 24,
+  "window_temporal_impute": true,
+  "pooling_stats": [
+    "mean",
+    "median",
+    "max",
+    "min",
+    "std"
+  ]
+}

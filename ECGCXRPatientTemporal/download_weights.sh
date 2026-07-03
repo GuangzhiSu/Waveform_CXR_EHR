@@ -1,5 +1,5 @@
 #!/bin/bash
-# Download frozen encoder checkpoints into checkpoints/.
+# Download frozen encoder checkpoints into artifacts/checkpoints/.
 #   - Bio-ViL-T image encoder  (HuggingFace microsoft/BiomedVLP-BioViL-T)
 #   - ECG-CoCa encoder         (Google Drive, via gdown)
 #
@@ -7,7 +7,7 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CKPT_DIR="${SCRIPT_DIR}/checkpoints"
+CKPT_DIR="${SCRIPT_DIR}/artifacts/checkpoints"
 mkdir -p "${CKPT_DIR}"
 cd "${CKPT_DIR}"
 
@@ -36,5 +36,5 @@ else
   [[ -f "${ECGCOCA}" ]] || echo "    https://drive.google.com/file/d/1wOKYfkb-Nep0WzYZz9-n66oTzp_4cky7/view"
 fi
 
-echo "=== checkpoints/ ==="
+echo "=== artifacts/checkpoints/ ==="
 ls -la "${CKPT_DIR}"

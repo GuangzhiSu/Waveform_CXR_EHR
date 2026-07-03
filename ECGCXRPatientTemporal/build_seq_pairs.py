@@ -9,9 +9,9 @@ Reuses the slow catalog loaders from ``build_pairs.py`` once, then emits:
       where delta_h = t2 - (most recent ECG time).
 
   * Exp 4  (patient_temporal_pairs.json) -- with CXR_t1:
-      every target t2 paired with each earlier CXR_t1 such that
-      t2 - t1 in [MIN_INTERVAL, MAX_INTERVAL] (up to MAX_SKIP earlier CXRs),
-      keeping same-patient ECGs in (t1, t2]. Sample:
+      every target t2 paired with each earlier CXR_t1 in [t2 - 24h, t2]
+      by default (up to MAX_SKIP earlier CXRs), keeping same-patient ECGs in
+      [max(t2 - 12h, t1), t2]. Sample:
       {patient_id, t1_h, t2_h, cxr_t1, cxr_t2, ecg_ids, ecg_times_h, delta_h}
       where delta_h = t2 - t1.
 
@@ -76,7 +76,7 @@ def build(cxr_nodes: dict, ecg_nodes: dict, args):
                 "delta_h": float(t2 - max(ecg_times)),
             })
 
-        # ---- Exp 4: t1 -> t2 with ECGs in (t1, t2] ----
+        # ---- Exp 4: t1 -> t2 with ECGs in [max(t2 - lookback, t1), t2] ----
         for i in range(len(cseq)):
             t1 = cseq[i]["t_h"]
             for j in range(i + 1, min(i + 1 + args.max_skip, len(cseq))):
@@ -84,7 +84,8 @@ def build(cxr_nodes: dict, ecg_nodes: dict, args):
                 dt = t2 - t1
                 if dt < args.min_interval_hours or dt > args.max_interval_hours:
                     continue
-                lo = int(np.searchsorted(e_times, t1, side="right"))
+                ecg_start = max(t2 - args.ecg_lookback_hours, t1)
+                lo = int(np.searchsorted(e_times, ecg_start, side="left"))
                 hi = int(np.searchsorted(e_times, t2, side="right"))
                 idxs = _cap_recent(list(range(lo, hi)), args.max_ecgs)
                 if len(idxs) < args.min_ecgs:
@@ -128,6 +129,8 @@ def main() -> int:
     ap.add_argument("--max_skip", type=int, default=C.MAX_SKIP)
     ap.add_argument("--min_ecgs", type=int, default=C.MIN_ECGS_PER_INTERVAL)
     ap.add_argument("--max_ecgs", type=int, default=C.MAX_ECGS_PER_INTERVAL)
+    ap.add_argument("--ecg_lookback_hours", type=float, default=C.ECG_LOOKBACK_HOURS,
+                    help="Exp4 ECGs are in [max(t2 - this many hours, t1), t2].")
     ap.add_argument("--require_cxr_on_disk", action="store_true")
     ap.add_argument("--skip_cxr_path_check", action="store_true",
                     help="Do not os.stat every CXR during pair building; assume constructed paths exist.")

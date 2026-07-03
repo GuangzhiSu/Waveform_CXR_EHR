@@ -21,14 +21,10 @@ from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 
 EXP_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = EXP_DIR.parent
 sys.path.insert(0, str(EXP_DIR))
-for _p in (PROJECT_ROOT / "BaselineExperiment", PROJECT_ROOT / "BaselineExperiment" / "CXRUni"):
-    if _p.is_dir() and str(_p) not in sys.path:
-        sys.path.insert(0, str(_p))
 
 import config as C  # noqa: E402
-from ECGUni.dataset import load_ecg  # noqa: E402
+from io_utils import load_ecg  # noqa: E402
 
 
 def _device(arg: str) -> torch.device:
@@ -161,10 +157,22 @@ def _load_existing(ids_json, emb_npy):
     return {i: vecs[k] for k, i in enumerate(ids)}
 
 
+def _cache_paths(cache_dir: str | Path) -> dict[str, str]:
+    cache_dir = Path(cache_dir)
+    return {
+        "cxr_emb": str(cache_dir / "cxr_emb.npy"),
+        "cxr_ids": str(cache_dir / "cxr_ids.json"),
+        "ecg_emb": str(cache_dir / "ecg_emb.npy"),
+        "ecg_ids": str(cache_dir / "ecg_ids.json"),
+    }
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--pairs", nargs="+", default=[C.PAIRS_JSON],
                     help="One or more pairs files; their CXR/ECG meta are unioned.")
+    ap.add_argument("--cache_dir", default=str(C.CACHE_DIR),
+                    help="Directory for cxr/ecg embedding npy + id json outputs.")
     ap.add_argument("--merge", action="store_true",
                     help="Reuse the existing cache and only embed ids not already cached.")
     ap.add_argument("--biovil_ckpt", default=C.BIOVIL_T_CKPT)
@@ -181,6 +189,7 @@ def main() -> int:
     args = ap.parse_args()
 
     device = _device(args.device)
+    paths = _cache_paths(args.cache_dir)
     print(f"=== precompute_embeddings (device={device}) ===", flush=True)
     cxr_meta: dict = {}
     ecg_meta: dict = {}
@@ -192,10 +201,10 @@ def main() -> int:
             ecg_meta.setdefault(k, v)
     print(f"  union over {len(args.pairs)} pairs file(s): "
           f"unique CXR={len(cxr_meta):,}, unique ECG={len(ecg_meta):,}", flush=True)
-    Path(C.CACHE_DIR).mkdir(parents=True, exist_ok=True)
+    Path(args.cache_dir).mkdir(parents=True, exist_ok=True)
 
     if not args.skip_cxr:
-        cached = _load_existing(C.CXR_IDS_JSON, C.CXR_EMB_NPY) if args.merge else {}
+        cached = _load_existing(paths["cxr_ids"], paths["cxr_emb"]) if args.merge else {}
         todo = {k: v for k, v in cxr_meta.items() if k not in cached}
         print(f"  CXR: {len(cached):,} cached, {len(todo):,} new to embed", flush=True)
         new_ids, new_vecs = precompute_cxr(todo, args.biovil_ckpt, device,
@@ -204,12 +213,12 @@ def main() -> int:
         vecs = (np.stack([cached[i] for i in cached]) if cached else
                 np.zeros((0, new_vecs.shape[1] if len(new_vecs) else C.CXR_FEAT_DIM), np.float32))
         vecs = np.concatenate([vecs, new_vecs], axis=0) if len(new_vecs) else vecs
-        np.save(C.CXR_EMB_NPY, vecs.astype(np.float32))
-        json.dump(ids, open(C.CXR_IDS_JSON, "w"))
-        print(f"  Saved {C.CXR_EMB_NPY} {vecs.shape}", flush=True)
+        np.save(paths["cxr_emb"], vecs.astype(np.float32))
+        json.dump(ids, open(paths["cxr_ids"], "w"))
+        print(f"  Saved {paths['cxr_emb']} {vecs.shape}", flush=True)
 
     if not args.skip_ecg:
-        cached = _load_existing(C.ECG_IDS_JSON, C.ECG_EMB_NPY) if args.merge else {}
+        cached = _load_existing(paths["ecg_ids"], paths["ecg_emb"]) if args.merge else {}
         todo = {k: v for k, v in ecg_meta.items() if k not in cached}
         print(f"  ECG: {len(cached):,} cached, {len(todo):,} new to embed", flush=True)
         new_ids, new_vecs = precompute_ecg(todo, args.ecg_ckpt, args.ecg_config, device,
@@ -219,9 +228,9 @@ def main() -> int:
         vecs = (np.stack([cached[i] for i in cached]) if cached else
                 np.zeros((0, new_vecs.shape[1] if len(new_vecs) else C.ECG_FEAT_DIM), np.float32))
         vecs = np.concatenate([vecs, new_vecs], axis=0) if len(new_vecs) else vecs
-        np.save(C.ECG_EMB_NPY, vecs.astype(np.float32))
-        json.dump(ids, open(C.ECG_IDS_JSON, "w"))
-        print(f"  Saved {C.ECG_EMB_NPY} {vecs.shape}", flush=True)
+        np.save(paths["ecg_emb"], vecs.astype(np.float32))
+        json.dump(ids, open(paths["ecg_ids"], "w"))
+        print(f"  Saved {paths['ecg_emb']} {vecs.shape}", flush=True)
 
     return 0
 

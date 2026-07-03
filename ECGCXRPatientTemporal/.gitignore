@@ -1,8 +1,13 @@
 # Large/derived artifacts — regenerate via the pipeline scripts.
-pylibs/
-checkpoints/
-cache*/
-output*/
+artifacts/pylibs/
+artifacts/checkpoints/*
+!artifacts/checkpoints/.gitkeep
+artifacts/cache/*
+!artifacts/cache/.gitkeep
+artifacts/outputs/*
+!artifacts/outputs/.gitkeep
+artifacts/logs/*
+!artifacts/logs/.gitkeep
 external/ECG-R1/
 __pycache__/
 *.pyc

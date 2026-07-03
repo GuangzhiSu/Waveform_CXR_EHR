@@ -9,13 +9,32 @@ the ECG already carries a learnable signal about the *future* CXR latent state.
 All embeddings are frozen: CXR from **Bio-ViL-T**, ECG from **ECG-CoCa**. Only
 small projection / Transformer / predictor heads are trained.
 
-## Staged experiments (Exp 1 → Exp 4)
+## Layout
+
+```text
+ECGCXRPatientTemporal/
+├── *.py                       # current experiment code
+├── jobs/                      # CPU / Slurm launchers
+├── encoders/                  # frozen Bio-ViL-T / ECG-CoCa wrappers
+├── external/ECG-R1/           # local ECG-CoCa source checkout, ignored by git
+└── artifacts/                 # generated caches, checkpoints, outputs, logs, pylibs
+```
+
+Large generated files are kept under `artifacts/` so the source directory stays
+readable for new work. The large artifact contents, encoder checkpoints, local
+`pylibs/`, and `external/ECG-R1/` checkout are ignored by git; only layout
+markers and source/docs are tracked.
+
+## Staged experiments
 
 The framework is deliberately staged from **ECG-only** to **multimodal fusion**,
 so we can tell whether a fusion model truly uses the ECG rather than leaning on a
-`CXR_t1` shortcut. Every experiment uses the **same two contrastive losses**
-(`cross_patient_loss + λ·temporal_loss`, λ=0.2) — no delta / label /
-reconstruction / generation losses.
+`CXR_t1` shortcut. The default `ALL_IN_ORDER` run covers Exp 1-4. Exp 5/6 are
+registered follow-up groups that must be requested with `--only`.
+
+All runs use the same contrastive loss family: `cross_patient_loss` plus optional
+`λ·temporal_loss` (`λ=0.2` for combined runs). There are no delta / label /
+reconstruction / generation losses; Exp 1A is the deliberate cross-only check.
 
 | Step | Name | Input → target | Key pieces |
 |------|------|----------------|------------|
@@ -29,26 +48,35 @@ reconstruction / generation losses.
 | 4 | `exp4b_cxr_only` | CXR_t1 → CXR_t2 | shortcut control **B** |
 | 4 | `exp4d_fusion_shuffled_ecg` | CXR_t1 + *other-patient* ECG → CXR_t2 | shortcut control **D** |
 | 4 | `exp4e_fusion_zeroed_ecg` | CXR_t1 + *zeroed* ECG → CXR_t2 | shortcut control **E** |
+| opt-in | `exp5a_proj_tx_crossattn_norm` | CXR_t1 query + ECG tokens → CXR_t2 | CXR query cross-attends ECG tokens, residual norm |
+| opt-in | `exp5b_proj_add_norm` | CXR_t1 + pooled ECG → CXR_t2 | project, add, normalize |
+| opt-in | `exp5c_weighted_attn_pool` | CXR_t1 + ECG tokens → CXR_t2 | single-linear weighted pooling over CXR/ECG tokens |
+| opt-in | `exp6a_cxr_residual_ecg` | CXR_t1 base + ECG residual → CXR_t2 | CXR-only base with gated ECG residual |
 
 Read off the shortcut controls: C ≫ B means ECG adds information; C ≈ B means the
 model leans on the CXR_t1 shortcut; D ≈ B means it relies on the *real* ECG;
 D ≈ C or E ≈ B means the ECG is being ignored.
 
 Steps 1–2 use **single-ECG** pairs (`ECG at t → CXR at t+9–15h`, built by
-`build_single_ecg_pairs.py`); steps 3–4 reuse the **sequence** interval pairs
-(`build_pairs.py`). Run order and a unified results table are produced by
-`run_experiments.py`.
+`build_single_ecg_pairs.py`); steps 3–4 reuse the **sequence** pair files built
+by `build_seq_pairs.py` through `jobs/run_build_pairs.sh`. Run order and a
+unified results table are produced by `run_experiments.py`.
 
 ```bash
-# 1. single-ECG pairs (Exp 1/2). --restrict_to_cache reuses already-embedded ids.
-python ECGCXRPatientTemporal/build_single_ecg_pairs.py            # full set (needs precompute)
-# 2. (only if new ids) merge-precompute over BOTH pairs files, reusing the cache:
-sbatch ECGCXRPatientTemporal/run_precompute.sh \
-       --pairs ECGCXRPatientTemporal/cache/patient_temporal_pairs.json \
-               ECGCXRPatientTemporal/cache/single_ecg_pairs.json --merge
-# 3. run all staged experiments + unified table -> output_staged/results_table.csv
-sbatch ECGCXRPatientTemporal/run_staged.sh
+# 1. sequence pairs (Exp 3/4) -> patient_temporal_pairs.json + seq_target_pairs.json
+bash ECGCXRPatientTemporal/jobs/run_build_pairs.sh
+# 2. single-ECG pairs (Exp 1/2). --restrict_to_cache reuses already-embedded ids.
+bash ECGCXRPatientTemporal/jobs/run_build_single_pairs.sh
+# 3. (only if new ids) merge-precompute over all staged pairs files, reusing the cache:
+sbatch ECGCXRPatientTemporal/jobs/run_precompute.sh \
+       --pairs ECGCXRPatientTemporal/artifacts/cache/default/patient_temporal_pairs.json \
+               ECGCXRPatientTemporal/artifacts/cache/default/seq_target_pairs.json \
+               ECGCXRPatientTemporal/artifacts/cache/default/single_ecg_pairs.json \
+       --merge
+# 4. run default staged experiments (Exp 1-4) + unified table -> artifacts/outputs/staged/results_table.csv
+sbatch ECGCXRPatientTemporal/jobs/run_staged.sh
 #    or a subset:  --only step1 step2   /   --only exp4c_fusion_cxr1_ecgseq exp4b_cxr_only
+#    optional follow-ups: --only fusion_schemes   /   --only improve
 ```
 
 ---
@@ -88,34 +116,40 @@ Transformer, and fusion MLP are trained.
 The vendored ECG-CoCa code lives in `external/ECG-R1/`. Only the ECG tower is
 built (the CoCa text tower needs `ncbi/MedCPT-Query-Encoder` and is skipped).
 Python deps for the encoders (`health_multimodal`, `gdown`, `pydicom`,
-`SimpleITK`) are installed into the workspace-local `pylibs/` prefix because the
-`MedTVT-R1` conda env is read-only on this cluster; `setup_env.sh` wires them up.
+`SimpleITK`) are installed into the workspace-local `artifacts/pylibs/` prefix
+because the `MedTVT-R1` conda env is read-only on this cluster; `setup_env.sh`
+wires them up.
 
 ## Pipeline
 
 ```bash
-# 0. Environment (activates MedTVT-R1 + workspace pylibs + ECG-R1)
+# 0. Environment (activates MedTVT-R1 + artifacts/pylibs + ECG-R1)
 source ECGCXRPatientTemporal/setup_env.sh
 
-# 1. Download frozen encoder weights -> checkpoints/
+# 1. Download frozen encoder weights -> artifacts/checkpoints/
 bash ECGCXRPatientTemporal/download_weights.sh
 #    Bio-ViL-T: auto from HuggingFace.
 #    ECG-CoCa : Google Drive file id 1wOKYfkb-Nep0WzYZz9-n66oTzp_4cky7
 #               (cpt_wfep_epoch_20.pt). This Drive file is often rate-limited
 #               ("Too many users ... recently"); if so, retry later (~24h reset).
 
-# 2. Build patient-temporal pairs from the CXR + ECG catalogs -> cache/
-bash ECGCXRPatientTemporal/run_build_pairs.sh
+# 2. Build sequence + single-ECG pairs from the CXR + ECG catalogs -> artifacts/cache/default/
+bash ECGCXRPatientTemporal/jobs/run_build_pairs.sh
+bash ECGCXRPatientTemporal/jobs/run_build_single_pairs.sh
 
-# 3. Precompute frozen CXR/ECG embeddings (GPU) -> cache/
-sbatch ECGCXRPatientTemporal/run_precompute.sh
+# 3. Precompute frozen CXR/ECG embeddings (GPU) -> artifacts/cache/default/
+sbatch ECGCXRPatientTemporal/jobs/run_precompute.sh \
+  --pairs ECGCXRPatientTemporal/artifacts/cache/default/patient_temporal_pairs.json \
+          ECGCXRPatientTemporal/artifacts/cache/default/seq_target_pairs.json \
+          ECGCXRPatientTemporal/artifacts/cache/default/single_ecg_pairs.json \
+  --merge
 #   or locally: python ECGCXRPatientTemporal/precompute_embeddings.py
 
 # 4. Train (GPU)
-sbatch ECGCXRPatientTemporal/run_train.sh --loss_mode combined
+sbatch ECGCXRPatientTemporal/jobs/run_train.sh --loss_mode combined
 
 # 5. Ablation: only cross, only temporal, cross + 0.2*temporal
-sbatch ECGCXRPatientTemporal/run_ablation.sh
+sbatch ECGCXRPatientTemporal/jobs/run_ablation.sh
 ```
 
 ## Data extraction
@@ -127,26 +161,26 @@ build full non-EHR-restricted catalogs first:
 
 ```bash
 python ECGCXRPatientTemporal/build_full_catalogs.py
-bash ECGCXRPatientTemporal/run_build_pairs.sh \
+bash ECGCXRPatientTemporal/jobs/run_build_pairs.sh \
   --cxr_csv data/ecg_cxr_full_cxr_catalog.csv \
   --ecg_csv data/ecg_cxr_full_ecg_catalog.csv \
-  --target_out ECGCXRPatientTemporal/cache_full/seq_target_pairs.json \
-  --t1_out ECGCXRPatientTemporal/cache_full/patient_temporal_pairs.json \
+  --target_out ECGCXRPatientTemporal/artifacts/cache/full/seq_target_pairs.json \
+  --t1_out ECGCXRPatientTemporal/artifacts/cache/full/patient_temporal_pairs.json \
   --skip_cxr_path_check
-bash ECGCXRPatientTemporal/run_build_single_pairs.sh \
+bash ECGCXRPatientTemporal/jobs/run_build_single_pairs.sh \
   --cxr_csv data/ecg_cxr_full_cxr_catalog.csv \
   --ecg_csv data/ecg_cxr_full_ecg_catalog.csv \
-  --out ECGCXRPatientTemporal/cache_full/single_ecg_pairs.json \
+  --out ECGCXRPatientTemporal/artifacts/cache/full/single_ecg_pairs.json \
   --skip_cxr_path_check
-sbatch ECGCXRPatientTemporal/run_precompute.sh \
-  --pairs ECGCXRPatientTemporal/cache_full/patient_temporal_pairs.json \
-          ECGCXRPatientTemporal/cache_full/seq_target_pairs.json \
-          ECGCXRPatientTemporal/cache_full/single_ecg_pairs.json \
+sbatch ECGCXRPatientTemporal/jobs/run_precompute.sh \
+  --pairs ECGCXRPatientTemporal/artifacts/cache/full/patient_temporal_pairs.json \
+          ECGCXRPatientTemporal/artifacts/cache/full/seq_target_pairs.json \
+          ECGCXRPatientTemporal/artifacts/cache/full/single_ecg_pairs.json \
   --merge
-sbatch ECGCXRPatientTemporal/run_staged.sh \
-  --pairs ECGCXRPatientTemporal/cache_full/patient_temporal_pairs.json \
-  --seq_target_pairs ECGCXRPatientTemporal/cache_full/seq_target_pairs.json \
-  --single_pairs ECGCXRPatientTemporal/cache_full/single_ecg_pairs.json
+sbatch ECGCXRPatientTemporal/jobs/run_staged.sh \
+  --pairs ECGCXRPatientTemporal/artifacts/cache/full/patient_temporal_pairs.json \
+  --seq_target_pairs ECGCXRPatientTemporal/artifacts/cache/full/seq_target_pairs.json \
+  --single_pairs ECGCXRPatientTemporal/artifacts/cache/full/single_ecg_pairs.json
 ```
 
 For each
@@ -187,16 +221,19 @@ Splits are **by patient** (no patient leakage across train/val/test).
 | File | Role |
 |------|------|
 | `config.py` | Paths + hyper-parameters |
-| `env_setup.py` / `setup_env.sh` | Wire pylibs + ECG-R1 + skimage stub |
-| `download_weights.sh` | Fetch Bio-ViL-T + ECG-CoCa checkpoints |
+| `env_setup.py` / `setup_env.sh` | Wire `artifacts/pylibs` + ECG-R1 + skimage stub |
+| `download_weights.sh` | Fetch Bio-ViL-T + ECG-CoCa checkpoints into `artifacts/checkpoints/` |
+| `jobs/*.sh` | CPU/Slurm launchers; all paths now write logs under `artifacts/logs/` |
+| `artifacts/` | Generated caches, checkpoints, logs, local pylibs, and experiment outputs |
 | `encoders/biovil_t.py` | Frozen Bio-ViL-T CXR encoder |
 | `encoders/ecg_coca.py` | Frozen ECG-CoCa ECG encoder |
-| `build_pairs.py` | Build sequence interval samples (Exp 3/4) from catalogs |
+| `build_pairs.py` | Shared CXR/ECG catalog loaders plus original Exp 4 pair builder |
+| `build_seq_pairs.py` | Build Exp 3 `seq_target_pairs.json` and Exp 4 `patient_temporal_pairs.json` together |
 | `build_single_ecg_pairs.py` | Build single-ECG → future-CXR pairs (Exp 1/2, 9–15h) |
 | `precompute_embeddings.py` | Cache frozen CXR/ECG embeddings (`--pairs ... --merge`) |
-| `experiments.py` | Staged experiment registry (Exp 1A/1B/2/3A/3B/4 + controls A–E) |
+| `experiments.py` | Staged registry (default Exp 1-4, plus opt-in `fusion_schemes` / `improve`) |
 | `staged_dataset.py` | Unified single/sequence dataset (+ zero/shuffle ECG controls) |
-| `staged_model.py` | Configurable model (cxr_t1 / single-or-seq ECG / `g` / time / query) |
+| `staged_model.py` | Configurable model (cxr_t1 / single-or-seq ECG / `g` / time / query / special fusion heads) |
 | `engine.py` | Generic train + eval loop reused by every staged experiment |
 | `run_experiments.py` | Run staged experiments → unified `results_table.csv`/`.json` |
 | `sampler.py` | N-patients × K-intervals sampler |

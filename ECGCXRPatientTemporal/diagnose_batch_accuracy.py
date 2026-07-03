@@ -245,7 +245,7 @@ def build_args():
                     help="Subset: step1/step2/step3/step4 or specific experiment names.")
     ap.add_argument("--splits", nargs="+", default=["test"],
                     choices=["train", "val", "test"])
-    ap.add_argument("--output_dir", default=str(EXP_DIR / "output_staged"))
+    ap.add_argument("--output_dir", default=C.STAGED_OUTPUT_DIR)
     ap.add_argument("--pairs", default=C.PAIRS_JSON)
     ap.add_argument("--seq_target_pairs", default=C.SEQ_TARGET_PAIRS_JSON)
     ap.add_argument("--single_pairs", default=C.SINGLE_ECG_PAIRS_JSON)

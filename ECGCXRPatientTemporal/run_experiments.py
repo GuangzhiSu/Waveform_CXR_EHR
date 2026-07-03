@@ -144,7 +144,7 @@ def build_args():
     ap.add_argument("--cxr_ids", default=C.CXR_IDS_JSON)
     ap.add_argument("--ecg_emb", default=C.ECG_EMB_NPY)
     ap.add_argument("--ecg_ids", default=C.ECG_IDS_JSON)
-    ap.add_argument("--output_dir", default=str(EXP_DIR / "output_staged"))
+    ap.add_argument("--output_dir", default=C.STAGED_OUTPUT_DIR)
     ap.add_argument("--proj_dim", type=int, default=C.PROJ_DIM)
     ap.add_argument("--d_model", type=int, default=C.D_MODEL)
     ap.add_argument("--ecg_tx_layers", type=int, default=C.ECG_TX_LAYERS)

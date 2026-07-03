@@ -51,32 +51,40 @@ def _study_datetime(study_date: pd.Series, study_time: pd.Series) -> pd.Series:
     return pd.to_datetime(date + time, format="%Y%m%d%H%M%S", errors="coerce")
 
 
+def _normalize_view_positions(view_positions: set[str] | None) -> set[str] | None:
+    if not view_positions:
+        return None
+    return {str(v).strip().upper() for v in view_positions if str(v).strip()}
+
+
 def build_cxr_catalog(all_images_path: str, metadata_path: str,
                       view_positions: set[str] | None) -> pd.DataFrame:
-    cols = ["subject_id", "study_id", "dicom_id", "ViewPosition"]
-    cxr = pd.read_csv(all_images_path, usecols=cols, low_memory=False)
-    if view_positions:
-        cxr = cxr[cxr["ViewPosition"].astype(str).isin(view_positions)].copy()
-
+    del all_images_path  # CXR view position comes from the MIMIC-CXR-JPG metadata.
     meta = pd.read_csv(
         metadata_path,
-        usecols=["dicom_id", "subject_id", "study_id", "StudyDate", "StudyTime"],
+        usecols=[
+            "dicom_id", "subject_id", "study_id", "StudyDate", "StudyTime",
+            "ViewPosition",
+        ],
         low_memory=False,
     )
-    cxr["dicom_id"] = cxr["dicom_id"].astype(str)
+    view_positions = _normalize_view_positions(view_positions)
+    meta["ViewPosition_norm"] = meta["ViewPosition"].astype("string").str.strip().str.upper()
+    if view_positions:
+        meta = meta[meta["ViewPosition_norm"].isin(view_positions)].copy()
+
     meta["dicom_id"] = meta["dicom_id"].astype(str)
-    merged = cxr.merge(meta, on=["dicom_id", "subject_id", "study_id"], how="left")
-    merged["supertable_datetime"] = _study_datetime(
-        merged["StudyDate"], merged["StudyTime"]
+    meta["supertable_datetime"] = _study_datetime(
+        meta["StudyDate"], meta["StudyTime"]
     )
-    merged = merged[
-        merged["subject_id"].notna()
-        & merged["dicom_id"].notna()
-        & merged["supertable_datetime"].notna()
+    meta = meta[
+        meta["subject_id"].notna()
+        & meta["dicom_id"].notna()
+        & meta["supertable_datetime"].notna()
     ].copy()
-    merged["subject_id"] = merged["subject_id"].astype(np.int64)
-    merged["hadm_id"] = ""
-    out = merged[["subject_id", "dicom_id", "hadm_id", "supertable_datetime"]]
+    meta["subject_id"] = meta["subject_id"].astype(np.int64)
+    meta["hadm_id"] = ""
+    out = meta[["subject_id", "dicom_id", "hadm_id", "supertable_datetime"]]
     return out.sort_values(["subject_id", "supertable_datetime", "dicom_id"])
 
 
@@ -137,8 +145,9 @@ def main() -> int:
 
     view_positions = set(args.view_positions) if args.view_positions else None
     print("=== build_full_catalogs: raw MIMIC ECG/CXR metadata ===", flush=True)
-    print(f"  CXR all_images: {args.cxr_all_images}", flush=True)
+    print(f"  CXR all_images: {args.cxr_all_images} (unused for view filtering)", flush=True)
     print(f"  CXR metadata  : {args.cxr_metadata}", flush=True)
+    print(f"  CXR views     : {args.view_positions or 'ALL'}", flush=True)
     print(f"  ECG records   : {args.ecg_record_list}", flush=True)
 
     cxr = build_cxr_catalog(args.cxr_all_images, args.cxr_metadata, view_positions)
