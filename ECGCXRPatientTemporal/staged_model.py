@@ -172,15 +172,16 @@ class StagedModel(nn.Module):
                 self.pool_score = nn.Linear(d_model, 1)
                 self.pool_norm = nn.LayerNorm(d_model)
                 self.pool_out = nn.Linear(d_model, proj_dim)
-        elif self.fusion_mode == "cxr_residual_ecg":
+        elif self.fusion_mode in {"cxr_residual_ecg", "cxr_ecg_only_residual"}:
             assert spec.use_cxr_t1 and spec.use_ecg and spec.ecg_mode == "sequence", (
-                "cxr_residual_ecg expects CXR_t1 + ECG sequence inputs")
+                f"{self.fusion_mode} expects CXR_t1 + ECG sequence inputs")
             assert self.encoder is not None and self.ecg_in_proj is not None
             self.cxr_token_proj = nn.Identity() if proj_dim == d_model else nn.Linear(proj_dim, d_model)
             # ``g`` intentionally matches the CXR-only model so it can be warm-started.
             self.g = MLP(proj_dim, fusion_hidden, proj_dim, dropout)
             self.residual_score = nn.Linear(d_model, 1)
-            self.residual_delta = MLP(proj_dim + d_model, fusion_hidden, proj_dim, dropout)
+            residual_in = d_model if self.fusion_mode == "cxr_ecg_only_residual" else proj_dim + d_model
+            self.residual_delta = MLP(residual_in, fusion_hidden, proj_dim, dropout)
             self.residual_scale = nn.Parameter(torch.tensor(-3.0, dtype=torch.float32))
         else:
             raise ValueError(f"Unknown fusion_mode={self.fusion_mode!r}")
@@ -291,6 +292,15 @@ class StagedModel(nn.Module):
             weights = torch.softmax(scores, dim=1)
             ecg_pool = (ecg_tokens * weights.unsqueeze(-1)).sum(dim=1)
             delta = F.normalize(self.residual_delta(torch.cat([c1, ecg_pool], dim=-1)), dim=-1)
+            scale = torch.sigmoid(self.residual_scale)
+            return F.normalize(base + scale * delta, dim=-1)
+
+        if self.fusion_mode == "cxr_ecg_only_residual":
+            base = F.normalize(self.g(c1), dim=-1)
+            scores = self.residual_score(ecg_tokens).squeeze(-1).masked_fill(~mask, float("-inf"))
+            weights = torch.softmax(scores, dim=1)
+            ecg_pool = (ecg_tokens * weights.unsqueeze(-1)).sum(dim=1)
+            delta = F.normalize(self.residual_delta(ecg_pool), dim=-1)
             scale = torch.sigmoid(self.residual_scale)
             return F.normalize(base + scale * delta, dim=-1)
 

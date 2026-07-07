@@ -241,6 +241,28 @@ def default_registry() -> "list[ExperimentSpec]":
         loss_mode="combined", lambda_temporal=0.2,
     ))
     specs.append(ExperimentSpec(
+        name="exp5c_weighted_attn_pool_shuffled",
+        description=("Scheme 3 control: weighted attentive pooling over CXR_t1 "
+                     "and shuffled other-patient ECG tokens."),
+        pairs_kind="seq_t1", target_window="0-24h",
+        use_cxr_t1=True, use_ecg=True, ecg_mode="sequence",
+        use_predictor_g=True, use_time_embedding=True,
+        use_transformer=True, use_future_query=False, ecg_pool="mean",
+        fusion_mode="weighted_attn_pool", ecg_perturb="shuffle",
+        loss_mode="combined", lambda_temporal=0.2,
+    ))
+    specs.append(ExperimentSpec(
+        name="exp5c_weighted_attn_pool_zeroed",
+        description=("Scheme 3 control: weighted attentive pooling over CXR_t1 "
+                     "and zeroed ECG tokens."),
+        pairs_kind="seq_t1", target_window="0-24h",
+        use_cxr_t1=True, use_ecg=True, ecg_mode="sequence",
+        use_predictor_g=True, use_time_embedding=True,
+        use_transformer=True, use_future_query=False, ecg_pool="mean",
+        fusion_mode="weighted_attn_pool", ecg_perturb="zero",
+        loss_mode="combined", lambda_temporal=0.2,
+    ))
+    specs.append(ExperimentSpec(
         name="exp6a_cxr_residual_ecg",
         description=("CXR_t1 base predictor plus a gated ECG residual. Intended to "
                      "warm-start from CXR-only and test whether ECG improves the CXR_t1 shortcut."),
@@ -249,6 +271,39 @@ def default_registry() -> "list[ExperimentSpec]":
         use_predictor_g=True, use_time_embedding=True,
         use_transformer=True, use_future_query=False, ecg_pool="mean",
         fusion_mode="cxr_residual_ecg",
+        loss_mode="combined", lambda_temporal=0.2,
+    ))
+    specs.append(ExperimentSpec(
+        name="exp6b_ecg_only_residual",
+        description=("Frozen CXR_t1 base predictor plus a gated residual whose delta "
+                     "is computed from ECG tokens only."),
+        pairs_kind="seq_t1", target_window="0-24h",
+        use_cxr_t1=True, use_ecg=True, ecg_mode="sequence",
+        use_predictor_g=True, use_time_embedding=True,
+        use_transformer=True, use_future_query=False, ecg_pool="mean",
+        fusion_mode="cxr_ecg_only_residual",
+        loss_mode="combined", lambda_temporal=0.2,
+    ))
+    specs.append(ExperimentSpec(
+        name="exp6b_ecg_only_residual_shuffled",
+        description=("Control for exp6b: frozen CXR_t1 base plus ECG-only residual "
+                     "using shuffled other-patient ECG tokens."),
+        pairs_kind="seq_t1", target_window="0-24h",
+        use_cxr_t1=True, use_ecg=True, ecg_mode="sequence",
+        use_predictor_g=True, use_time_embedding=True,
+        use_transformer=True, use_future_query=False, ecg_pool="mean",
+        fusion_mode="cxr_ecg_only_residual", ecg_perturb="shuffle",
+        loss_mode="combined", lambda_temporal=0.2,
+    ))
+    specs.append(ExperimentSpec(
+        name="exp6b_ecg_only_residual_zeroed",
+        description=("Control for exp6b: frozen CXR_t1 base plus ECG-only residual "
+                     "using zeroed ECG tokens."),
+        pairs_kind="seq_t1", target_window="0-24h",
+        use_cxr_t1=True, use_ecg=True, ecg_mode="sequence",
+        use_predictor_g=True, use_time_embedding=True,
+        use_transformer=True, use_future_query=False, ecg_pool="mean",
+        fusion_mode="cxr_ecg_only_residual", ecg_perturb="zero",
         loss_mode="combined", lambda_temporal=0.2,
     ))
     return specs
@@ -265,6 +320,12 @@ STEP_GROUPS = {
               "exp4d_fusion_shuffled_ecg", "exp4e_fusion_zeroed_ecg"],
     "fusion_schemes": ["exp5a_proj_tx_crossattn_norm", "exp5b_proj_add_norm",
                        "exp5c_weighted_attn_pool"],
+    "weighted_controls": ["exp5c_weighted_attn_pool",
+                          "exp5c_weighted_attn_pool_shuffled",
+                          "exp5c_weighted_attn_pool_zeroed"],
+    "ecg_residual_controls": ["exp6b_ecg_only_residual",
+                              "exp6b_ecg_only_residual_shuffled",
+                              "exp6b_ecg_only_residual_zeroed"],
     "improve": ["exp5c_weighted_attn_pool", "exp6a_cxr_residual_ecg"],
 }
 ALL_IN_ORDER = (STEP_GROUPS["step1"] + STEP_GROUPS["step2"]

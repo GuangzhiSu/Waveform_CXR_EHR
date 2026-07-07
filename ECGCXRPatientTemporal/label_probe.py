@@ -123,17 +123,25 @@ def extract_embeddings(model, dataset, data, cxr_ids: list[str], label_table: pd
     model.eval()
     for batch in loader:
         b = {k: (v.to(device) if torch.is_tensor(v) else v) for k, v in batch.items()}
-        q, c2, c1 = model.encode(b)
-        if embedding == "q":
-            z = q
-        elif embedding == "c2":
-            z = c2
-        elif embedding == "c1":
-            if c1 is None:
-                raise RuntimeError("Requested c1 embedding, but this experiment has no CXR_t1.")
-            z = c1
+        if embedding in {"raw_c2", "raw_c1"}:
+            if embedding == "raw_c2":
+                z = b["c2"]
+            else:
+                if "c1" not in b:
+                    raise RuntimeError("Requested raw_c1 embedding, but this experiment has no CXR_t1.")
+                z = b["c1"]
         else:
-            raise ValueError(f"Unknown embedding={embedding!r}")
+            q, c2, c1 = model.encode(b)
+            if embedding == "q":
+                z = q
+            elif embedding == "c2":
+                z = c2
+            elif embedding == "c1":
+                if c1 is None:
+                    raise RuntimeError("Requested c1 embedding, but this experiment has no CXR_t1.")
+                z = c1
+            else:
+                raise ValueError(f"Unknown embedding={embedding!r}")
 
         z = z.float().cpu().numpy()
         c2_rows = batch["c2_row"].cpu().numpy()
@@ -285,6 +293,13 @@ def train_probe(kind: str, train_x, train_y, val_x, val_y, test_x, test_y, args,
         "history": history,
         "checkpoint": str(best_path),
     }
+    np.savez_compressed(
+        out_dir / f"predictions_{kind}.npz",
+        val_y=val_y.astype(np.float32),
+        val_logits=val_logits.astype(np.float32),
+        test_y=test_y.astype(np.float32),
+        test_logits=test_logits.astype(np.float32),
+    )
     with open(out_dir / f"results_{kind}.json", "w") as f:
         json.dump(result, f, indent=2)
     return result
@@ -327,7 +342,7 @@ def build_args():
     )
     ap.add_argument("--label_csv", default=DEFAULT_LABEL_CSV)
     ap.add_argument("--output_dir", default=str(C.OUTPUTS_DIR / "label_probe"))
-    ap.add_argument("--embedding", default="q", choices=["q", "c1", "c2"])
+    ap.add_argument("--embedding", default="q", choices=["q", "c1", "c2", "raw_c1", "raw_c2"])
     ap.add_argument("--uncertain_positive", action="store_true")
     ap.add_argument("--min_train_positives", type=int, default=10)
     ap.add_argument("--probe", default="both", choices=["linear", "mlp", "both"])
@@ -370,7 +385,16 @@ def main():
     fallback_spec = REGISTRY[args.experiment]
     ckpt_path = _checkpoint_path(args, fallback_spec)
     spec = _load_spec_from_checkpoint(ckpt_path, fallback_spec)
-    out_dir = Path(args.output_dir) / spec.name / args.embedding
+    probe_tag = (
+        f"{args.probe}_lr{args.probe_lr:g}_wd{args.probe_weight_decay:g}"
+        f"_h{args.hidden_dim}_do{args.dropout:g}_mp{args.min_train_positives}"
+        f"_pw{args.max_pos_weight:g}"
+    )
+    if args.uncertain_positive:
+        probe_tag += "_uncertainpos"
+    if args.no_standardize:
+        probe_tag += "_nostd"
+    out_dir = Path(args.output_dir) / spec.name / args.embedding / probe_tag
     out_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"=== Label probe: {spec.name} embedding={args.embedding} device={device} ===")

@@ -24,6 +24,29 @@ from staged_dataset import StagedData, StagedDataset, collate_fn
 from staged_model import StagedModel
 
 
+def _temporal_negative_stats(dataset: StagedDataset) -> dict:
+    by_patient: dict[int, set[int]] = {}
+    for idx in dataset.indices:
+        pair = dataset.data.pairs[idx]
+        by_patient.setdefault(int(pair["patient_id"]), set()).add(int(pair["c2"]))
+
+    counts: dict[int, int] = {}
+    for idx in dataset.indices:
+        pair = dataset.data.pairs[idx]
+        n_neg = len(by_patient[int(pair["patient_id"])] - {int(pair["c2"])})
+        counts[n_neg] = counts.get(n_neg, 0) + 1
+
+    n_queries = len(dataset.indices)
+    n_with_neg = sum(v for k, v in counts.items() if k >= 1)
+    return {
+        "n_queries": int(n_queries),
+        "n_patients": int(len(by_patient)),
+        "negative_count_distribution": {str(k): int(counts[k]) for k in sorted(counts)},
+        "queries_with_temporal_negative": int(n_with_neg),
+        "fraction_with_temporal_negative": (n_with_neg / n_queries) if n_queries else float("nan"),
+    }
+
+
 def _safe_div(num: int | float, den: int | float) -> float:
     return (num / den) if den else float("nan")
 
@@ -230,7 +253,10 @@ def fit(spec, args, data: StagedData | None = None, device=None, verbose: bool =
 
     sampler = NPatientsKIntervalsSampler(
         train_ds.patient_ids(), args.n_patients, args.k_intervals,
-        num_batches=args.steps_per_epoch, seed=args.seed)
+        num_batches=args.steps_per_epoch, seed=args.seed,
+        target_rows=train_ds.target_rows(),
+        min_targets_per_patient=getattr(args, "min_train_targets_per_patient", 1),
+        sample_unique_targets=getattr(args, "sample_unique_targets", False))
     train_loader = DataLoader(train_ds, batch_sampler=sampler, collate_fn=collate_fn)
 
     model = StagedModel(
@@ -297,6 +323,10 @@ def fit(spec, args, data: StagedData | None = None, device=None, verbose: bool =
     if verbose:
         print(f"  [{spec.name}] kind={spec.pairs_kind} trainable={n_train:,} "
               f"w_cross={w_cross} w_temporal={w_temporal} perturb={perturb}")
+        print(f"  sampler: N={args.n_patients} K={args.k_intervals} "
+              f"eligible_patients={len(sampler.eligible):,} "
+              f"min_targets={getattr(args, 'min_train_targets_per_patient', 1)} "
+              f"unique_targets={getattr(args, 'sample_unique_targets', False)}")
 
     optimizer = torch.optim.AdamW(
         [p for p in model.parameters() if p.requires_grad],
@@ -321,7 +351,7 @@ def fit(spec, args, data: StagedData | None = None, device=None, verbose: bool =
         global_step = tr.pop("last_global_step")
         val_res = evaluate_retrieval(model, val_ds, data.cxr_emb, device,
                                      args.eval_batch_size, collate_fn=collate_fn)
-        mon = _monitor(val_res, spec.loss_mode)
+        mon = _monitor(val_res, effective_loss_mode)
         history.append({"epoch": epoch, "train": tr, "val": val_res, "monitor": mon,
                         "temperature": model.temperature_value()})
         if verbose:
@@ -363,6 +393,18 @@ def fit(spec, args, data: StagedData | None = None, device=None, verbose: bool =
         "best_epoch": best_epoch, "best_val_monitor": best_monitor,
         "n_trainable_params": n_train, "model_config": model_config,
         "init_from": init_report,
+        "sampler_config": {
+            "n_patients": int(args.n_patients),
+            "k_intervals": int(args.k_intervals),
+            "min_train_targets_per_patient": int(getattr(args, "min_train_targets_per_patient", 1)),
+            "sample_unique_targets": bool(getattr(args, "sample_unique_targets", False)),
+            "eligible_train_patients": int(len(sampler.eligible)),
+        },
+        "split_temporal_negative_stats": {
+            "train": _temporal_negative_stats(train_ds),
+            "val": _temporal_negative_stats(val_ds),
+            "test": _temporal_negative_stats(test_ds),
+        },
         "test": test_res, "history": history,
     }
     results.update(_write_train_dynamics(train_dynamics or [], out_dir))

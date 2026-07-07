@@ -152,6 +152,11 @@ def build_args():
                     default=C.LEARNABLE_TEMPERATURE)
     ap.add_argument("--n_patients", type=int, default=C.N_PATIENTS)
     ap.add_argument("--k_intervals", type=int, default=C.K_INTERVALS)
+    ap.add_argument("--min_train_targets_per_patient", type=int, default=1,
+                    help=("Only sample train patients with at least this many distinct "
+                          "CXR_t2 targets. Default preserves the original sampler."))
+    ap.add_argument("--sample_unique_targets", action="store_true",
+                    help="When possible, sample different CXR_t2 targets for each patient in a batch.")
     ap.add_argument("--epochs", type=int, default=C.EPOCHS)
     ap.add_argument("--steps_per_epoch", type=int, default=C.STEPS_PER_EPOCH)
     ap.add_argument("--lr", type=float, default=C.LR)

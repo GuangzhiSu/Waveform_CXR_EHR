@@ -179,6 +179,10 @@ class StagedDataset(Dataset):
         return np.array([self.data.pairs[i]["patient_id"] for i in self.indices],
                         dtype=np.int64)
 
+    def target_rows(self) -> np.ndarray:
+        return np.array([self.data.pairs[i]["c2"] for i in self.indices],
+                        dtype=np.int64)
+
     def _ecg_from(self, pair) -> tuple:
         rows = np.asarray(pair["ecg_rows"], dtype=np.int64)
         t2t = np.asarray(pair["ecg_t2t"], dtype=np.float64)
