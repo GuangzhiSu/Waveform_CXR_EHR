@@ -25,12 +25,7 @@ sys.path.insert(0, str(EXP_DIR))
 
 import config as C  # noqa: E402
 from io_utils import load_ecg  # noqa: E402
-
-
-def _device(arg: str) -> torch.device:
-    if arg == "auto":
-        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    return torch.device(arg)
+from runtime import get_device  # noqa: E402
 
 
 # --------------------------------------------------------------------------- #
@@ -188,7 +183,7 @@ def main() -> int:
     ap.add_argument("--skip_ecg", action="store_true")
     args = ap.parse_args()
 
-    device = _device(args.device)
+    device = get_device(args.device)
     paths = _cache_paths(args.cache_dir)
     print(f"=== precompute_embeddings (device={device}) ===", flush=True)
     cxr_meta: dict = {}

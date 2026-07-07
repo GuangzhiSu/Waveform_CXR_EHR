@@ -18,15 +18,10 @@ from torch.utils.data import DataLoader
 import config as C
 from losses import batch_retrieval_metrics, total_loss
 from metrics import evaluate_retrieval
+from runtime import set_seed
 from sampler import NPatientsKIntervalsSampler
 from staged_dataset import StagedData, StagedDataset, collate_fn
 from staged_model import StagedModel
-
-
-def set_seed(seed: int):
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
 
 
 def _safe_div(num: int | float, den: int | float) -> float:

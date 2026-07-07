@@ -26,14 +26,13 @@ import json
 import sys
 from pathlib import Path
 
-import torch
-
 EXP_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(EXP_DIR))
 
 import config as C  # noqa: E402
 from engine import fit, load_staged_data  # noqa: E402
 from experiments import ALL_IN_ORDER, REGISTRY, STEP_GROUPS  # noqa: E402
+from runtime import get_device  # noqa: E402
 
 TABLE_COLUMNS = [
     "experiment_name", "input_type", "target_window",
@@ -175,12 +174,6 @@ def build_args():
     ap.add_argument("--no_train_dynamics", action="store_true",
                     help="Disable per-iteration train dynamics CSV/JSON/PNG outputs.")
     return ap.parse_args()
-
-
-def get_device(arg: str) -> torch.device:
-    if arg == "auto":
-        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    return torch.device(arg)
 
 
 def main():

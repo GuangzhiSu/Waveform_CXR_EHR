@@ -12,7 +12,6 @@ import json
 import sys
 from pathlib import Path
 
-import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
@@ -24,13 +23,8 @@ from dataset import PatientTemporalData, PatientTemporalDataset, collate_fn  # n
 from losses import total_loss  # noqa: E402
 from metrics import evaluate_retrieval  # noqa: E402
 from model import PatientTemporalModel  # noqa: E402
+from runtime import get_device, set_seed  # noqa: E402
 from sampler import NPatientsKIntervalsSampler  # noqa: E402
-
-
-def set_seed(seed: int):
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
 
 
 def build_args():
@@ -63,12 +57,6 @@ def build_args():
     ap.add_argument("--device", default="auto")
     ap.add_argument("--tag", default=None, help="Optional run name (subdir of output_dir).")
     return ap.parse_args()
-
-
-def get_device(arg: str) -> torch.device:
-    if arg == "auto":
-        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    return torch.device(arg)
 
 
 def run_epoch(model, loader, optimizer, device, w_cross, w_temporal, max_grad_norm):

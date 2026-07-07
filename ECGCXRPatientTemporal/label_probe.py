@@ -23,8 +23,9 @@ EXP_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(EXP_DIR))
 
 import config as C  # noqa: E402
-from engine import load_staged_data, set_seed  # noqa: E402
+from engine import load_staged_data  # noqa: E402
 from experiments import REGISTRY, ExperimentSpec  # noqa: E402
+from runtime import get_device, set_seed  # noqa: E402
 from staged_dataset import StagedDataset, collate_fn  # noqa: E402
 from staged_model import StagedModel  # noqa: E402
 
@@ -56,12 +57,6 @@ class MLPProbe(nn.Module):
 
     def forward(self, x):
         return self.net(x)
-
-
-def get_device(arg: str) -> torch.device:
-    if arg == "auto":
-        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    return torch.device(arg)
 
 
 def _checkpoint_path(args, spec) -> Path:

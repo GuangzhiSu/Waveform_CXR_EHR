@@ -197,52 +197,48 @@ class StagedModel(nn.Module):
     def temperature_value(self) -> float:
         return float(torch.exp(-self.logit_scale).item())
 
-    def _encode_sequence(self, batch) -> torch.Tensor:
+    def _encode_sequence_tokens(self, batch, add_pool_token: bool = False):
+        """Return Transformer ECG tokens, their mask, and whether token 0 is a pool token."""
         feats = batch["ecg_feats"]
+        mask = batch["ecg_mask"].bool()
         if self.spec.ecg_perturb == "zero":
-            return feats.new_zeros(feats.size(0), self.ecg_out_dim)
+            h = feats.new_zeros(feats.size(0), feats.size(1), self.d_model)
+            return h, mask, False
+
         B = feats.size(0)
         h = self.ecg_in_proj(feats)
         if self.seq_time_emb is not None:
-            h = h + self.seq_time_emb(batch["ecg_t2t"])  # (B, L, d_model)
-        mask = batch["ecg_mask"]  # True = valid
-
-        use_query = self.future_query is not None
-        if use_query:
+            h = h + self.seq_time_emb(batch["ecg_t2t"])
+        has_pool_token = False
+        if add_pool_token and self.future_query is not None:
             q_tok = self.future_query.expand(B, 1, -1)
             if self.future_time_emb is not None:
                 q_tok = q_tok + self.future_time_emb(batch["delta_t"]).unsqueeze(1)
             h = torch.cat([q_tok, h], dim=1)
             pad = torch.ones(B, 1, dtype=mask.dtype, device=mask.device)
             mask = torch.cat([pad, mask], dim=1)
-        elif self.cls_token is not None:
+            has_pool_token = True
+        elif add_pool_token and self.cls_token is not None:
             cls = self.cls_token.expand(B, 1, -1)
             h = torch.cat([cls, h], dim=1)
             pad = torch.ones(B, 1, dtype=mask.dtype, device=mask.device)
             mask = torch.cat([pad, mask], dim=1)
+            has_pool_token = True
 
-        h = self.encoder(h, src_key_padding_mask=~mask.bool())
-        h = self.enc_norm(h)
-        h = torch.nan_to_num(h, nan=0.0, posinf=0.0, neginf=0.0)
-        if use_query or self.cls_token is not None:
-            return h[:, 0]
-        m = mask.unsqueeze(-1).float()
-        return (h * m).sum(dim=1) / m.sum(dim=1).clamp(min=1.0)
-
-    def _encode_sequence_tokens(self, batch) -> tuple[torch.Tensor, torch.Tensor]:
-        """Return Transformer ECG tokens and their validity mask for fusion heads."""
-        feats = batch["ecg_feats"]
-        mask = batch["ecg_mask"].bool()
-        if self.spec.ecg_perturb == "zero":
-            h = feats.new_zeros(feats.size(0), feats.size(1), self.d_model)
-            return h, mask
-        h = self.ecg_in_proj(feats)
-        if self.seq_time_emb is not None:
-            h = h + self.seq_time_emb(batch["ecg_t2t"])
         h = self.encoder(h, src_key_padding_mask=~mask)
         h = self.enc_norm(h)
         h = torch.nan_to_num(h, nan=0.0, posinf=0.0, neginf=0.0)
-        return h, mask
+        return h, mask, has_pool_token
+
+    def _encode_sequence(self, batch) -> torch.Tensor:
+        feats = batch["ecg_feats"]
+        if self.spec.ecg_perturb == "zero":
+            return feats.new_zeros(feats.size(0), self.ecg_out_dim)
+
+        h, mask, has_pool_token = self._encode_sequence_tokens(batch, add_pool_token=True)
+        if has_pool_token:
+            return h[:, 0]
+        return self._masked_mean(h, mask)
 
     @staticmethod
     def _masked_mean(tokens: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
@@ -264,7 +260,7 @@ class StagedModel(nn.Module):
 
     def _special_fusion_query(self, batch, c1: torch.Tensor) -> torch.Tensor:
         """Fusion modes for the three requested Exp4 follow-up architectures."""
-        ecg_tokens, mask = self._encode_sequence_tokens(batch)
+        ecg_tokens, mask, _ = self._encode_sequence_tokens(batch)
         c1_tok = self.cxr_token_proj(c1).unsqueeze(1)
 
         if self.fusion_mode == "cross_attention_norm":

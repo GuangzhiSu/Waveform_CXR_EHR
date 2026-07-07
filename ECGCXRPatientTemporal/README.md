@@ -221,9 +221,11 @@ Splits are **by patient** (no patient leakage across train/val/test).
 | File | Role |
 |------|------|
 | `config.py` | Paths + hyper-parameters |
+| `runtime.py` | Shared small runtime helpers (`get_device`, `set_seed`) |
 | `env_setup.py` / `setup_env.sh` | Wire `artifacts/pylibs` + ECG-R1 + skimage stub |
 | `download_weights.sh` | Fetch Bio-ViL-T + ECG-CoCa checkpoints into `artifacts/checkpoints/` |
-| `jobs/*.sh` | CPU/Slurm launchers; all paths now write logs under `artifacts/logs/` |
+| `jobs/_common.sh` | Shared project-root, log-dir, and environment setup for job scripts |
+| `jobs/*.sh` | CPU/Slurm launchers; each wrapper only runs its task-specific command |
 | `artifacts/` | Generated caches, checkpoints, logs, local pylibs, and experiment outputs |
 | `encoders/biovil_t.py` | Frozen Bio-ViL-T CXR encoder |
 | `encoders/ecg_coca.py` | Frozen ECG-CoCa ECG encoder |

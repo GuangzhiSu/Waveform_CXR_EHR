@@ -15,16 +15,6 @@
 # and write a unified results table. Pass-through args, e.g.:
 #   sbatch ECGCXRPatientTemporal/jobs/run_staged.sh --only step1 step2
 set -euo pipefail
-if [[ -n "${SLURM_SUBMIT_DIR:-}" ]]; then
-  PROJECT_DIR="${SLURM_SUBMIT_DIR}"
-  EXP_DIR="${PROJECT_DIR}/ECGCXRPatientTemporal"
-else
-  JOB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  EXP_DIR="$(cd "${JOB_DIR}/.." && pwd)"
-  PROJECT_DIR="$(cd "${EXP_DIR}/.." && pwd)"
-fi
-mkdir -p "${EXP_DIR}/artifacts/logs"
-cd "${PROJECT_DIR}"
-source "${EXP_DIR}/setup_env.sh"
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_common.sh"
 python -u "${EXP_DIR}/run_experiments.py" "$@"
 echo "=== Done ==="
